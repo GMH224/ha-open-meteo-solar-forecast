@@ -1,5 +1,10 @@
 update_array_location:
   fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: open_meteo_solar_forecast
     location_override:
       required: false
       selector:

@@ -111,7 +111,12 @@ class FakeFusion:
         if self.fail_service:
             raise RuntimeError("weather service down")
         first = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-        return {entity: {"forecast": weather_hourly(first)} for entity in call.data["entity_id"]}
+        # T-1 (0.1.33.4): entity_id arrives as a string here (the fake has
+        # no schema); iterating it keyed the response by single characters.
+        entities = call.data["entity_id"]
+        if isinstance(entities, str):
+            entities = [entities]
+        return {entity: {"forecast": weather_hourly(first)} for entity in entities}
 
     def publish(self, first_hour: datetime, hours: int = 120, **kwargs) -> None:
         self.hass.states.async_set(
@@ -329,6 +334,9 @@ async def test_no_temperature_at_all_is_refused(hass, zurich, freezer):
     hass.states.async_set(WEATHER, "sunny", {"temperature_unit": "°C", "supported_features": 7})
     entry, _ = await _setup(hass, LOCAL_OPTIONS)
     assert entry.state is ConfigEntryState.SETUP_RETRY
+    # The specific rule must fire, not a later guard (mutation M29 escaped in
+    # 0.1.33.4 once the empty-forecast guard also refused this case).
+    assert "no temperature available" in (entry.reason or "")
 
 
 async def test_an_exception_inside_the_library_is_contained_like_bad_data(hass, zurich, freezer):

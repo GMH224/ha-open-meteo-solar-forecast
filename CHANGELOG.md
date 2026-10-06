@@ -1,5 +1,50 @@
 # Changelog — GMH224 fork
 
+## 0.1.33.4 — 2026-10-06 — external audit remediation
+
+Remediates the external ICS/OT audit of 0.1.33.3 (20 findings; triage in
+`omsf_v0.1.33.3_external_audit_triage.md`, account in
+`omsf_v0.1.33.4_release_audit.md`). With the owner's consent, the
+"Open-Meteo mode unchanged" rule is relaxed for these safety fixes.
+
+### Fixed
+- **Hybrid, Open-Meteo down → "power now" 0 W in daylight (V-1, found during
+  verification) / empty forecast reported as success (OMSF-004).** Partial
+  local days keep their data for intraday values; an empty forecast is a
+  failure, never a success.
+- **Unbounded local input (OMSF-007/008):** irradiance and temperature lists
+  limited to 500 entries and to [now − 48 h, now + 10 days].
+- **Hybrid completeness (OMSF-011):** an Open-Meteo day needs all 24 hours.
+- **Secrets in error text (OMSF-018):** URL query strings and key-like
+  parameters removed, length ≤ 200, before any attribute or diagnostics.
+- **Service `update_array_location` (OMSF-001/002):** registered once;
+  validated coordinates; with more than one entry, `config_entry_id` is
+  required (previously the last-loaded entry was changed silently).
+- **Retained forecast age (OMSF-003):** served for at most 6 hours, in every
+  mode; then the forecast sensors are unavailable and `forecast_source` reads
+  `stale`.
+- **Horizon file (OMSF-009):** size/row limits, finite values, elevation
+  range, controlled message for every I/O problem. Endpoint tolerance
+  unchanged for compatibility.
+- **Malformed retained store (OMSF-012):** shape and value validation; a
+  malformed store is discarded instead of blocking setup.
+- **History store (OMSF-013):** failed read retried up to 3 times.
+- **Recorder (OMSF-019):** `wh_period_15m` excluded like the other series.
+- **Defensive parsing (OMSF-015/016).**
+- **Test harness (T-1):** the fake weather service returned the wrong keys,
+  so integration tests since 0.1.33.2 ran on the temperature fallback.
+
+### Changed
+- Snow depth: last valid value held for 24 h before "unavailable" is treated
+  as no snow (OMSF-005).
+- `forecast_source` attribute `data_quality` (temperature: forecast /
+  current-value fallback; snow depth: sensor / held / assumed 0) (OMSF-006).
+
+### Declined (documented)
+- OMSF-017 (custom base URL is a supported feature), OMSF-020 (several
+  entries are intended). OMSF-010 (DST) disputed: effect confined to night
+  hours.
+
 ## 0.1.33.3 — 2026-10-06
 
 ### Added

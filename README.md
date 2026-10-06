@@ -2,15 +2,16 @@
 
 This custom component integrates the [open-meteo-solar-forecast](https://github.com/rany2/open-meteo-solar-forecast) with Home Assistant. It allows you to see what your solar panels may produce in the future.
 
-> **GMH224 fork — v0.1.33.3.** Adds a **local weather source**: the forecast
+> **GMH224 fork — v0.1.33.4.** Adds a **local weather source**: the forecast
 > can be computed from Home Assistant entities (SwissWeather Fusion ≥ 0.3.3)
 > instead of the Open-Meteo API, with no internet access — and, from 0.1.33.3,
 > a **hybrid** mode: local for every day the local data covers, Open-Meteo for
 > the rest. Open-Meteo mode is unchanged and remains the default.
 > ICS documents:
 > [architecture](OMSF_v0_1_33_2_Architecture_ICS.md) ·
-> release audits [0.1.33.3](omsf_v0.1.33.3_release_audit.md), [0.1.33.2](omsf_v0.1.33.2_release_audit.md) ·
-> test reports [0.1.33.3](omsf_v0_1_33_3_ICS_quality_bug_testing_report.md), [0.1.33.2](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) ·
+> release audits [0.1.33.4](omsf_v0.1.33.4_release_audit.md), [0.1.33.3](omsf_v0.1.33.3_release_audit.md), [0.1.33.2](omsf_v0.1.33.2_release_audit.md) ·
+> [external audit triage 0.1.33.3](omsf_v0.1.33.3_external_audit_triage.md) ·
+> test reports [0.1.33.4](omsf_v0_1_33_4_ICS_quality_bug_testing_report.md), [0.1.33.3](omsf_v0_1_33_3_ICS_quality_bug_testing_report.md), [0.1.33.2](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) ·
 > [developer notes](DEVELOPER.md) · [changelog](CHANGELOG.md)
 
 ## Installation
@@ -75,6 +76,20 @@ Things to know in local mode:
   itself from then on). **Hybrid** mode fills these days from Open-Meteo.
 - In **Hybrid** mode the Open-Meteo days use the model set on the first page.
   MeteoSwiss models end after 5 days; for days 6–7 use `best_match`.
+
+### Stale data (all modes, 0.1.33.4)
+
+If no fresh forecast can be obtained, the last good one is kept for at most
+**6 hours**. After that the forecast sensors become *unavailable* and
+`sensor.<name>_forecast_source` shows **stale** (its `last_error` attribute
+says why). The source sensor's `data_quality` attribute shows degraded inputs
+in local/hybrid mode (temperature fallback, snow depth held or assumed 0).
+
+### Service `update_array_location`
+
+Sets an entry's location (default: the Home Assistant home location). With
+more than one entry configured, `config_entry_id` must be given; coordinates
+are validated (finite, latitude −90…90, longitude −180…180).
 - The radiation values are model output without bias correction.
 
 Details: [architecture document](OMSF_v0_1_33_2_Architecture_ICS.md).

@@ -98,6 +98,16 @@ TEMPERATURE_EXTRAPOLATE_LIMIT = timedelta(minutes=90)
 
 SNOW_DEPTH_MAX_M = 20.0
 
+# 0.1.33.4 input bounds (external audit OMSF-007/008). The source is a Home
+# Assistant entity attribute, i.e. untrusted: its size and time span must be
+# bounded before any work proportional to them is done.
+MAX_SERIES_ENTRIES = 500
+"""Fusion publishes ~170 hourly entries; anything above this is rejected as
+a whole (not truncated: a truncated series would look valid but be wrong)."""
+SERIES_WINDOW_PAST = timedelta(hours=48)
+SERIES_WINDOW_FUTURE = timedelta(days=10)
+"""Entries outside [now - 48 h, now + 10 d] are rejected individually."""
+
 # --------------------------------------------------------------------------
 # Data classes
 # --------------------------------------------------------------------------
@@ -166,6 +176,7 @@ class ParseReport:
     accepted_average: int = 0
     accepted_instant: int = 0
     rejected: list[str] = field(default_factory=list)
+    oversize: bool = False
 
     def reject(self, index: int, reason: str) -> None:
         # Bounded so a pathological payload cannot bloat diagnostics.
@@ -401,18 +412,31 @@ def _valid_triple(
     return True, None
 
 
+def _outside_window(moment: datetime, now: datetime | None) -> bool:
+    if now is None:
+        return False
+    return not (now - SERIES_WINDOW_PAST <= moment <= now + SERIES_WINDOW_FUTURE)
+
+
 def parse_irradiance_series(
     raw: Any,
+    now: datetime | None = None,
 ) -> tuple[dict[datetime, HourRecord], ParseReport]:
     """Validate a Fusion ``hourly_forecast`` attribute.
 
     Never raises on bad content: invalid entries or triples are dropped and
-    reported. A non-list input yields an empty result.
+    reported. A non-list input, or a list longer than MAX_SERIES_ENTRIES,
+    yields an empty result. With ``now`` given, entries outside the time
+    window [now - 48 h, now + 10 d] are rejected.
     """
     report = ParseReport()
     records: dict[datetime, HourRecord] = {}
     if not isinstance(raw, list):
         report.reject(-1, f"series is {type(raw).__name__}, expected list")
+        return records, report
+    if len(raw) > MAX_SERIES_ENTRIES:
+        report.oversize = True
+        report.reject(-1, f"series has {len(raw)} entries, limit {MAX_SERIES_ENTRIES}")
         return records, report
 
     for index, item in enumerate(raw):
@@ -426,6 +450,9 @@ def parse_irradiance_series(
             continue
         if start != floor_hour(start):
             report.reject(index, "period_start not on a full hour")
+            continue
+        if _outside_window(start, now):
+            report.reject(index, "period_start outside the accepted time window")
             continue
         end_raw = item.get("period_end")
         if end_raw is not None:
@@ -467,16 +494,19 @@ def parse_irradiance_series(
 
 
 def parse_temperature_forecast(
-    raw: Any, unit: str | None
+    raw: Any, unit: str | None, now: datetime | None = None
 ) -> tuple[dict[datetime, float], int]:
     """Validate an HA ``weather.get_forecasts`` hourly list.
 
     Returns ``({utc_time: temp_c}, rejected_count)``. Converts °F and K.
+    Same size and time-window bounds as the irradiance series.
     """
     temps: dict[datetime, float] = {}
     rejected = 0
     if not isinstance(raw, list):
         return temps, 0
+    if len(raw) > MAX_SERIES_ENTRIES:
+        return temps, len(raw)
     unit_norm = (unit or "°C").strip().upper().replace("°", "")
     for item in raw:
         if not isinstance(item, Mapping):
@@ -484,7 +514,7 @@ def parse_temperature_forecast(
             continue
         when = parse_utc(item.get("datetime"))
         value = _to_float(item.get("temperature"))
-        if when is None or value is None:
+        if when is None or value is None or _outside_window(when, now):
             rejected += 1
             continue
         if unit_norm == "F":
@@ -595,7 +625,11 @@ def _parse_geometry(value: str) -> float | None:
         parsed = float(value)
     except (TypeError, ValueError) as err:
         raise ValueError(f"invalid plane geometry value {value!r}") from err
-    return None if math.isnan(parsed) else parsed
+    if math.isnan(parsed):
+        return None
+    if not math.isfinite(parsed):  # OMSF-016: reject at the boundary
+        raise ValueError(f"non-finite plane geometry value {value!r}")
+    return parsed
 
 
 def plane_orientation(

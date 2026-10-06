@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import os
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -42,7 +44,9 @@ from .const import (
     ACTIVE_SOURCE_LOCAL,
     ACTIVE_SOURCE_OPEN_METEO,
     ACTIVE_SOURCE_RETAINED,
+    ACTIVE_SOURCE_STALE,
     DOMAIN,
+    RETAINED_MAX_AGE_HOURS,
     HYBRID_OPEN_METEO_MAX_AGE_MINUTES,
     HYBRID_OPEN_METEO_REFRESH_MINUTES,
     LOCAL_BASED_SOURCES,
@@ -52,6 +56,7 @@ from .const import (
     SOURCE_HYBRID,
     SOURCE_OPEN_METEO,
 )
+from .errors import sanitize_error
 from .hybrid import DAY_SOURCE_LOCAL, DAY_SOURCE_OPEN_METEO, merge_hybrid
 from .local_provider import (
     LocalDataError,
@@ -97,12 +102,31 @@ def _datetime_dict_to_json(data: dict[datetime, int]) -> dict[str, int]:
     return {timestamp.isoformat(): value for timestamp, value in data.items()}
 
 
+def _finite_number(value: Any) -> float:
+    """A finite int/float, else ValueError (0.1.33.4, audit OMSF-012)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"not a number: {value!r}")
+    if value != value or value in (float("inf"), float("-inf")):
+        raise ValueError(f"not finite: {value!r}")
+    return value
+
+
 def _datetime_dict_from_json(data: dict[str, int]) -> dict[datetime, int]:
-    return {datetime.fromisoformat(timestamp): value for timestamp, value in data.items()}
+    if not isinstance(data, dict):
+        raise ValueError(f"expected a mapping, got {type(data).__name__}")
+    result = {}
+    for timestamp, value in data.items():
+        moment = datetime.fromisoformat(timestamp)
+        if moment.tzinfo is None:
+            raise ValueError("naive timestamp in retained forecast")
+        result[moment] = _finite_number(value)
+    return result
 
 
 def _date_dict_from_json(data: dict[str, int]) -> dict[date, int]:
-    return {date.fromisoformat(day): value for day, value in data.items()}
+    if not isinstance(data, dict):
+        raise ValueError(f"expected a mapping, got {type(data).__name__}")
+    return {date.fromisoformat(day): _finite_number(value) for day, value in data.items()}
 
 
 def _is_sequence(value: Any) -> bool:
@@ -152,58 +176,79 @@ def _entry_value(entry: ConfigEntry, key: str) -> Any:
     """Get config value from options with fallback to entry data."""
     return entry.options.get(key, entry.data.get(key))
 
+HORIZON_FILE_MAX_BYTES = 64 * 1024
+HORIZON_FILE_MAX_ROWS = 3600
+
+
 def checkHorizonFile(horizon_filepath):
-    horizon_data_valid = True
-    message = ""
-    
+    """Validate a horizon file; return (horizon_map, "") or (None, message).
+
+    0.1.33.4 hardening (external audit OMSF-009). Every failure — missing
+    file, directory, permission, size, encoding, shape, non-finite values,
+    range, order — returns a controlled message instead of raising. The
+    endpoint rule is unchanged from earlier releases on purpose: the first
+    azimuth must truncate to 0 and the last to 360 (so 360.5 is still
+    accepted), because tightening it would break existing installations and
+    numpy.interp clamps outside the range anyway.
+    """
+    prefix = "Invalid horizon file: "
+    hint = " Please check (two columns, tab delimiter, decimal points)."
     try:
-        open(horizon_filepath)
-    except FileNotFoundError:
-        horizon_data_valid = False
-        message = "Invalid horizon file: Horizon file '" + horizon_filepath + "' not found! Specify path like e.g. '/config/www/horizon.txt'"
-    
-    if horizon_data_valid:
-        horizon_data = numpy.genfromtxt(horizon_filepath , delimiter="\t", dtype=float)
-        hm = ((0,90),(360,90))
-        
-        # ... check array shape (error)
-        sh = horizon_data.shape
-        if isinstance(sh, tuple) and len(sh) == 2:
-            if sh[0] < 2 or not sh[1] == 2:
-                horizon_data_valid = False
-                message = "Invalid horizon file: The array shape is " + str(sh) + ", which is invalid. It has to be at least two rows and exactly two columns (N>1 , 2). Please check (two columns, tab delimiter, decimal points)."
-            else:
-                hm = tuple([tuple(row) for row in horizon_data])
-        else:
-            horizon_data_valid = False
-            message = "Invalid horizon file: The array shape cannot be determined. It has to be at least two rows and exactly two columns (N>1 , 2). Please check (two columns, tab delimiter, decimal points)."
-        
-        # ... check for floats (error) - via valid sum of floats or NaN
-        if numpy.isnan(numpy.sum(hm)):
-            horizon_data_valid = False
-            message = "Invalid horizon file: The data seems to contain non-float values. Please check (two columns, tab delimiter, decimal points)."
-        
-        # ... check range 0...360° (warning only)
-        if horizon_data_valid:
-            hm_0 = int(hm[0][0])
-            hm_n = int(hm[-1][0])
-            if not hm_0 == 0 or not hm_n == 360:
-                horizon_data_valid = False
-                message = "Invalid horizon file: Azimuth values (" + str(hm_0) + "° to " + str(hm_n) + "°) do not contain 0° and/or 360°. I cannot judge whether the full range of applicable azimuths is covered by the horizon file. Please check..."
-            
-            # ... check ascending azimuths (warning only)
-            n = sh[0]
-            for i in range(1,n):
-                a1 = horizon_data[i-1][0]
-                a2 = horizon_data[i][0]
-                if not (a2 > a1):
-                    message = "Invalid horizon file: Azimuth values are not ascending around value of " + str(a1) + ". Please check..."
-                    horizon_data_valid = False
-    
-    if horizon_data_valid:
-        return hm, message
-    else:
-        return None, message  
+        if not os.path.isfile(horizon_filepath):
+            if os.path.exists(horizon_filepath):
+                return None, prefix + f"'{horizon_filepath}' is not a regular file."
+            return None, (
+                prefix + "Horizon file '" + str(horizon_filepath) + "' not found! "
+                "Specify path like e.g. '/config/www/horizon.txt'"
+            )
+        size = os.path.getsize(horizon_filepath)
+        if size > HORIZON_FILE_MAX_BYTES:
+            return None, prefix + f"file is {size} bytes, limit {HORIZON_FILE_MAX_BYTES}."
+        with open(horizon_filepath, encoding="utf-8") as handle:
+            text = handle.read(HORIZON_FILE_MAX_BYTES + 1)
+    except (OSError, UnicodeDecodeError) as err:
+        return None, prefix + f"cannot be read ({type(err).__name__})."
+
+    try:
+        horizon_data = numpy.genfromtxt(io.StringIO(text), delimiter="\t", dtype=float)
+    except ValueError:
+        return None, prefix + "the content cannot be parsed." + hint
+
+    sh = horizon_data.shape
+    if len(sh) != 2 or sh[0] < 2 or sh[1] != 2:
+        return None, (
+            prefix + "The array shape is " + str(sh) + ", which is invalid. It has to be "
+            "at least two rows and exactly two columns (N>1 , 2)." + hint
+        )
+    if sh[0] > HORIZON_FILE_MAX_ROWS:
+        return None, prefix + f"{sh[0]} rows, limit {HORIZON_FILE_MAX_ROWS}."
+    if not numpy.all(numpy.isfinite(horizon_data)):
+        return None, (
+            prefix + "The data contains non-numeric or non-finite values "
+            "(NaN, inf)." + hint
+        )
+
+    azimuths = horizon_data[:, 0]
+    elevations = horizon_data[:, 1]
+    hm_0 = int(azimuths[0])
+    hm_n = int(azimuths[-1])
+    if hm_0 != 0 or hm_n != 360:
+        return None, (
+            prefix + "Azimuth values (" + str(hm_0) + "° to " + str(hm_n) + "°) do not "
+            "contain 0° and/or 360°. I cannot judge whether the full range of applicable "
+            "azimuths is covered by the horizon file. Please check..."
+        )
+    for a1, a2 in zip(azimuths[:-1], azimuths[1:]):
+        if not a2 > a1:
+            return None, (
+                prefix + "Azimuth values are not ascending around value of "
+                + str(a1) + ". Please check..."
+            )
+    if numpy.any(elevations < -90) or numpy.any(elevations > 90):
+        return None, prefix + "Elevation values must be between -90° and 90°."
+
+    return tuple(tuple(float(v) for v in row) for row in horizon_data), ""
+
 
 class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate]):
     """The Solar Forecast Data Update Coordinator."""
@@ -371,6 +416,9 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         stored = await self._store.async_load()
         if not stored:
             return None
+        if not isinstance(stored, dict):
+            LOGGER.warning("Discarding malformed retained forecast data")
+            return None
 
         if stored.get("config_fingerprint") != self._config_fingerprint:
             LOGGER.debug(
@@ -380,16 +428,19 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
 
         try:
             last_update = stored["last_successful_update"]
+            if dt_util.parse_datetime(str(last_update)) is None:
+                raise ValueError("invalid last_successful_update")
             estimate = Estimate(
                 watts=_datetime_dict_from_json(stored["watts"]),
                 wh_period_15m=_datetime_dict_from_json(stored["wh_period_15m"]),
                 wh_period=_datetime_dict_from_json(stored["wh_period"]),
                 wh_days=_date_dict_from_json(stored["wh_days"]),
                 api_timezone=timezone(
-                    timedelta(seconds=stored["api_timezone_offset"])
+                    timedelta(seconds=_finite_number(stored["api_timezone_offset"]))
                 ),
             )
-        except (KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+            # OMSF-012: any malformation discards the whole retained object.
             LOGGER.warning("Discarding malformed retained forecast data")
             return None
 
@@ -465,10 +516,26 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         try:
             estimate, source = await self._async_fetch_estimate()
         except Exception as err:
-            self.last_source_error = str(err) or type(err).__name__
+            self.last_source_error = sanitize_error(err)
             retained = self.data
             if retained is None:
                 retained = await self._async_load_retained_estimate()
+            if retained is not None and not self._retained_within_age_limit():
+                # OMSF-003: a retained forecast is never served beyond
+                # RETAINED_MAX_AGE_HOURS. The forecast sensors become
+                # unavailable; the source sensor reports "stale".
+                if self.active_source != ACTIVE_SOURCE_STALE:
+                    LOGGER.warning(
+                        "Forecast from %s is older than %s h and is no longer served: %s",
+                        self._last_successful_update,
+                        RETAINED_MAX_AGE_HOURS,
+                        sanitize_error(err),
+                    )
+                self.active_source = ACTIVE_SOURCE_STALE
+                raise UpdateFailed(
+                    f"No fresh forecast for more than {RETAINED_MAX_AGE_HOURS} h: "
+                    f"{sanitize_error(err)}"
+                ) from err
             if retained is None:
                 self.active_source = None
                 if not self.uses_local:
@@ -487,7 +554,7 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
                 LOGGER.warning(
                     "Local weather source unusable, keeping the forecast from %s: %s",
                     self._last_successful_update,
-                    err,
+                    sanitize_error(err),
                 )
             self.active_source = ACTIVE_SOURCE_RETAINED
             return retained
@@ -506,6 +573,12 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         self._last_successful_update = dt_util.utcnow()
         self._save_retained_estimate(estimate)
         return estimate
+
+    def _retained_within_age_limit(self) -> bool:
+        last = self._last_successful_update
+        return last is not None and dt_util.utcnow() - last <= timedelta(
+            hours=RETAINED_MAX_AGE_HOURS
+        )
 
     async def _async_fetch_open_meteo(self) -> Estimate:
         async with asyncio.timeout(API_TIMEOUT_SECONDS):
@@ -541,9 +614,9 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             )
         except Exception as err:
             if isinstance(err, LocalDataError):
-                message = f"local source unusable: {err}"
+                message = f"local source unusable: {sanitize_error(err)}"
             else:
-                message = f"local source failed: {type(err).__name__}: {err}"
+                message = f"local source failed: {type(err).__name__}: {sanitize_error(err)}"
             if not self.fallback_to_open_meteo:
                 raise LocalDataError(message) from err
             if self.active_source != ACTIVE_SOURCE_FALLBACK:
@@ -554,6 +627,7 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             return estimate, ACTIVE_SOURCE_FALLBACK
 
         if self.weather_source != SOURCE_HYBRID:
+            self._ensure_not_empty(estimate)
             self._set_day_sources({day: DAY_SOURCE_LOCAL for day in local_days})
             return estimate, ACTIVE_SOURCE_LOCAL
 
@@ -562,6 +636,8 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         # refresh: without it, the local days are still served.
         open_meteo = await self._async_hybrid_open_meteo()
         merged, sources = merge_hybrid(estimate, open_meteo, set(local_days))
+        # OMSF-004: never return an empty forecast as a success.
+        self._ensure_not_empty(merged)
         self._set_day_sources(sources)
         if self.hybrid_status is not None:
             self.hybrid_status["open_meteo_days"] = sorted(
@@ -571,6 +647,11 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         if DAY_SOURCE_OPEN_METEO in sources.values():
             return merged, ACTIVE_SOURCE_HYBRID
         return merged, ACTIVE_SOURCE_LOCAL
+
+    @staticmethod
+    def _ensure_not_empty(estimate: Estimate) -> None:
+        if not estimate.watts or not estimate.wh_period:
+            raise LocalDataError("the computed forecast contains no data")
 
     async def _async_hybrid_open_meteo(self) -> Estimate | None:
         """Open-Meteo estimate for the hybrid days, cached.
@@ -594,7 +675,7 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         try:
             estimate = await self._async_fetch_open_meteo()
         except Exception as err:  # noqa: BLE001 - local days must survive
-            error = str(err) or type(err).__name__
+            error = sanitize_error(err)
             if cache is not None and now - cache[0] < timedelta(
                 minutes=HYBRID_OPEN_METEO_MAX_AGE_MINUTES
             ):

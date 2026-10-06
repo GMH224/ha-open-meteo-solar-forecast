@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
+import voluptuous as vol
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     CONF_AZIMUTH,
@@ -31,6 +36,96 @@ from .coordinator import (
 from .local_provider import HISTORY_STORAGE_VERSION, history_storage_key
 
 PLATFORMS = [Platform.SENSOR]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+SERVICE_UPDATE_ARRAY_LOCATION = "update_array_location"
+ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+ATTR_LOCATION_OVERRIDE = "location_override"
+
+
+def _finite_in_range(low: float, high: float):
+    """Validator: a finite number in [low, high]; bool and text rejected."""
+
+    def validator(value: Any) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise vol.Invalid(f"expected a number, got {value!r}")
+        number = float(value)
+        if not math.isfinite(number) or not low <= number <= high:
+            raise vol.Invalid(f"{number} is outside [{low}, {high}]")
+        return number
+
+    return validator
+
+
+# 0.1.33.4 (external audit OMSF-002): server-side schema. The location
+# selector also sends e.g. "radius", hence ALLOW_EXTRA on the inner mapping.
+SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
+        vol.Optional(ATTR_LOCATION_OVERRIDE): vol.Schema(
+            {
+                vol.Required(CONF_LATITUDE): _finite_in_range(-90.0, 90.0),
+                vol.Required(CONF_LONGITUDE): _finite_in_range(-180.0, 180.0),
+            },
+            extra=vol.ALLOW_EXTRA,
+        ),
+    }
+)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the integration-wide service once.
+
+    0.1.33.4 (external audit OMSF-001): the service used to be registered by
+    every config entry, so the last-loaded entry silently received every call
+    and the handler outlived unloaded entries. It is now registered once and
+    resolves its target explicitly.
+    """
+
+    async def async_update_array_location(call: ServiceCall) -> None:
+        loaded = [
+            entry
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            if entry.state is ConfigEntryState.LOADED
+        ]
+        entry_id = call.data.get(ATTR_CONFIG_ENTRY_ID)
+        if entry_id:
+            entry = next((e for e in loaded if e.entry_id == entry_id), None)
+            if entry is None:
+                raise ServiceValidationError(
+                    f"No loaded {DOMAIN} entry with id {entry_id}"
+                )
+        elif len(loaded) == 1:
+            entry = loaded[0]
+        elif not loaded:
+            raise ServiceValidationError(f"No loaded {DOMAIN} entry")
+        else:
+            raise ServiceValidationError(
+                f"{len(loaded)} {DOMAIN} entries are loaded; "
+                f"set '{ATTR_CONFIG_ENTRY_ID}' to choose one"
+            )
+
+        # Optional location override defaults to the Home Assistant location.
+        location = call.data.get(ATTR_LOCATION_OVERRIDE) or {
+            CONF_LATITUDE: hass.config.latitude,
+            CONF_LONGITUDE: hass.config.longitude,
+        }
+        latitude, longitude = location[CONF_LATITUDE], location[CONF_LONGITUDE]
+        # Updating the config entry reloads it, which updates the coordinator.
+        hass.config_entries.async_update_entry(
+            entry,
+            data={**entry.data, CONF_LATITUDE: latitude, CONF_LONGITUDE: longitude},
+            options={**entry.options, CONF_LATITUDE: latitude, CONF_LONGITUDE: longitude},
+        )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_UPDATE_ARRAY_LOCATION,
+        async_update_array_location,
+        schema=SERVICE_SCHEMA,
+    )
+    return True
 
 
 def _is_sequence(value: Any) -> bool:
@@ -138,21 +233,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
-
-    async def async_update_array_location(call: ServiceCall | None = None):
-        new_location = call.data.get("location_override", {
-                "latitude": hass.config.latitude,
-                "longitude": hass.config.longitude,
-        })  # Optional location override defaults to current Home Assistant location
-
-        # Updating config entry will automatically update the coordinator
-        hass.config_entries.async_update_entry(
-            entry,
-            data={**entry.data, CONF_LATITUDE: new_location["latitude"], CONF_LONGITUDE: new_location["longitude"]},
-            options={**entry.options, CONF_LATITUDE: new_location["latitude"], CONF_LONGITUDE: new_location["longitude"]},
-        )
-
-    hass.services.async_register(DOMAIN, "update_array_location", async_update_array_location)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

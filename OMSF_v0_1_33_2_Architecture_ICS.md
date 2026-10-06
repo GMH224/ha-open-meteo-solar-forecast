@@ -3,11 +3,55 @@
 **Feature:** local weather source — PV forecast from Home Assistant entities
 (SwissWeather Fusion ≥ 0.3.3) instead of the Open-Meteo API; from 0.1.33.3
 also a hybrid of both.
-**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3)
+**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3, 0.1.33.4)
 **Companion documents:**
 [`omsf_v0.1.33.2_release_audit.md`](omsf_v0.1.33.2_release_audit.md) (what changed, defects, safety analysis),
 [`omsf_v0_1_33_2_ICS_quality_bug_testing_report.md`](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) (tests, mutation record, gaps),
 [`DEVELOPER.md`](DEVELOPER.md) (module map, how to run tests).
+
+---
+
+## 0b. Update for 0.1.33.4 — external audit remediation
+
+An external ICS/OT audit of 0.1.33.3 raised 20 findings. Each was verified
+independently (14 by executable reproduction); 15 were confirmed, 2 were
+documented design, 1 disputed, 2 declined, and one defect the audit missed
+was found (V-1). Triage: `omsf_v0.1.33.3_external_audit_triage.md`. Changes to
+this architecture:
+
+- **Invariant R6 relaxed** (owner decision): safety fixes may change
+  Open-Meteo mode. Affected: the location service, the retention limit, the
+  horizon-file check, retained-store validation, the recorder exclusion.
+  Forecast values in Open-Meteo mode are unchanged.
+- **Input bounds (R18):** irradiance and temperature lists ≤ 500 entries,
+  timestamps within [now − 48 h, now + 10 d]; an oversized list is rejected
+  as a whole. §4.1 is extended accordingly.
+- **Bounded retention (R19, F15):** a retained forecast is served for at most
+  6 h after the last successful refresh, in every mode. Then the forecast
+  sensors are unavailable; `forecast_source` stays available and reads
+  `stale`. This replaces the unbounded behaviour of F1–F4/F11.
+- **Hybrid (R20):** a day neither source covers completely keeps its partial
+  local data for intraday values (as in local mode); an Open-Meteo day needs
+  all 24 hours; an empty forecast is a failure. §5.9 updated.
+- **Error text (R21):** sanitised (no URL query strings, no key-like
+  parameters, ≤ 200 characters) before any attribute or diagnostics.
+- **Service (R22):** registered once per integration with a schema;
+  `config_entry_id` required when more than one entry is loaded.
+- **Snow (R23):** last valid depth held 24 h (§5.8, L-5).
+- **Data quality (R24):** `forecast_source.data_quality`.
+- **Persistence (R25):** retained store and history store validated; history
+  read retried up to 3 times.
+
+| ID | Requirement | Verified by |
+|---|---|---|
+| R18 | Bounded external input | `test_omsf007_*`, `test_omsf008_*`; M53, M54 |
+| R19 | Retained forecast ≤ 6 h, then unavailable + `stale` | `test_omsf003_*` (both modes); M66, M67 |
+| R20 | Hybrid: partial local data kept; 24-hour completeness; no empty success | `test_v1_*`, `test_omsf004_*`, `test_a_day_with_23_hours_is_not_complete`; M51, M52, M55 |
+| R21 | No secrets in attributes/diagnostics | `test_omsf018_*`; M56, M57 |
+| R22 | Service targets an explicit, loaded entry; validated input | `test_omsf001_*`, `test_omsf002_*`; M63–M65 |
+| R23 | Snow hold 24 h | `test_omsf005_*`; M61 |
+| R24 | Degraded inputs visible | `test_omsf006_*`; M62 |
+| R25 | Malformed persistence never blocks setup | `test_omsf012_*`, `test_omsf013_*`; M58, M71, M72 |
 
 ---
 
@@ -379,7 +423,9 @@ reaches the full horizon.
 | F11 | Retained forecast older than its horizon | — (pre-existing behaviour) | values decay to 0 | — | `forecast_source` = `retained`, `last_successful_update` |
 | F12 | Hybrid: Open-Meteo request fails, cache ≤ 3 h | exception in Open-Meteo part | local days + cached Open-Meteo days | same | `hybrid_open_meteo.open_meteo` = `stale_cache`, `error` |
 | F13 | Hybrid: Open-Meteo request fails, no usable cache | as F12 | local days only; other days unknown; refresh succeeds | same | `forecast_source` = `local`, `hybrid_open_meteo` = `unavailable` |
-| F14 | Hybrid: Open-Meteo model shorter than the horizon | incomplete days (< 23 h) | those days unknown | same | day sensors `unknown`; `open_meteo_days` lists what was used |
+| F14 | Hybrid: Open-Meteo model shorter than the horizon | incomplete days (< 24 h, 0.1.33.4) | those days unknown | same | day sensors `unknown`; `open_meteo_days` lists what was used |
+| F15 | Any mode: no successful refresh for > 6 h (0.1.33.4) | age of `last_successful_update` | forecast sensors unavailable; retained data no longer served | same | `forecast_source` = `stale`, `last_error` |
+| F16 | Local input oversized or out of window (0.1.33.4) | parser bounds | oversized list → as F1; single out-of-window entries dropped | same | diagnostics `rejected` |
 
 Logging is transition-based: a warning when a failure starts (or fallback
 begins), an info line on recovery — not one line per 10-minute cycle.
@@ -449,8 +495,8 @@ Open-Meteo days.
 | L-2 | Radiation not bias-corrected | systematic model error passes through | inverter-based learning (Fusion backlog W6) |
 | L-3 | Horizon ≈ 5 days | d5 partly, d6–d7 not covered | those sensors read unknown (§5.7) |
 | L-4 | Fixed albedo 0.2 | snow-covered ground (0.6–0.8) underestimates ground-reflected light for steep arrays | small for typical roof tilts; backlog |
-| L-5 | Snow depth is a persistence forecast | melting / new snow not anticipated | Fusion's own guidance: use as a Dec–Feb "covered" flag |
-| L-6 | Fixed UTC offset per refresh (as Open-Meteo `timezone=auto`) | across a DST change, day boundaries beyond it are off by 1 h until the next refresh after the change | identical to Open-Meteo mode |
+| L-5 | Snow depth is a persistence forecast | melting / new snow not anticipated | Fusion's own guidance: use as a Dec–Feb "covered" flag; from 0.1.33.4 the last valid value is held 24 h if the sensor drops out |
+| L-6 | Fixed UTC offset per refresh (as Open-Meteo `timezone=auto`) | across a DST change, day boundaries beyond it are off by 1 h until the next refresh after the change. Timestamps themselves are correct instants; the misassigned hour is 00:00–01:00, with the sun far below the horizon, so daily PV totals are unaffected (verified for 25–31 Oct 2026; audit OMSF-010 disputed) | identical to Open-Meteo mode |
 | L-7 | Temperature is location-level air temperature | cell-temperature model as in the library (Ross, "not so well cooled") | unchanged library behaviour |
 | L-8 | Today is unknown on the first day without history | no "today" value until history covers the morning | intentional (§5.7); in hybrid mode today comes from Open-Meteo instead |
 | L-9 | Hybrid: Open-Meteo days limited by the entry's model | days 6–7 unknown with MeteoSwiss-only models | choose `best_match` for the hybrid entries (§5.9) |

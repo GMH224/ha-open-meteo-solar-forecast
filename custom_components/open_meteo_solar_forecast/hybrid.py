@@ -10,8 +10,12 @@ Rule (owner decision, 6 Oct 2026): sources are joined **by whole local days**.
   ``local_source.complete_local_dates``) comes entirely from the local
   estimate.
 * Every other day comes entirely from Open-Meteo, if Open-Meteo covers it
-  completely (≥ 23 hourly values in the local day; 23 allows a DST day).
-* A day neither source covers completely is absent (sensor "unknown").
+  completely (all 24 hourly values of the local day).
+* A day neither source covers completely keeps whatever **partial local**
+  data exists (0.1.33.4, V-1/OMSF-004): its day total stays unknown, but
+  intraday values (power now, this/next hour, remaining today) are the local
+  ones — exactly as in local mode. Before 0.1.33.4 such a day was dropped,
+  so with Open-Meteo down "power now" read 0 W in daylight.
 
 Because PV output is zero at local midnight, joining at day boundaries
 introduces no visible step in the power curve, and no day ever mixes two
@@ -29,7 +33,11 @@ from open_meteo_solar_forecast.models import Estimate
 DAY_SOURCE_LOCAL = "local"
 DAY_SOURCE_OPEN_METEO = "open_meteo"
 
-MIN_HOURS_FOR_COMPLETE_DAY = 23
+# Days are grouped in a fixed UTC offset (the local estimate's), so every
+# local day has exactly 24 hours. 0.1.33.3 accepted 23 "to allow a DST day",
+# which let an ordinary day with one missing hour pass as complete
+# (external audit OMSF-011).
+HOURS_PER_LOCAL_DAY = 24
 
 
 def _day(moment: datetime, tz: tzinfo) -> date:
@@ -53,7 +61,7 @@ def complete_open_meteo_days(estimate: Estimate, tz: tzinfo) -> set[date]:
     for moment in estimate.wh_period:
         local = moment.astimezone(tz)
         hours.setdefault(local.date(), set()).add(local.hour)
-    return {day for day, seen in hours.items() if len(seen) >= MIN_HOURS_FOR_COMPLETE_DAY}
+    return {day for day, seen in hours.items() if len(seen) >= HOURS_PER_LOCAL_DAY}
 
 
 def merge_hybrid(
@@ -73,9 +81,14 @@ def merge_hybrid(
     if open_meteo is not None:
         om_days = complete_open_meteo_days(open_meteo, tz) - set(local_days)
         sources.update({day: DAY_SOURCE_OPEN_METEO for day in om_days})
+    # Days only the local data touches, incompletely: kept for intraday
+    # values, but not listed in ``sources`` (day total stays unknown).
+    local_data_days = {_day(moment, tz) for moment in local.wh_period}
+    partial_local_days = local_data_days - set(local_days) - om_days
+    local_selected = set(local_days) | partial_local_days
 
     def joined(local_data: Mapping[datetime, Any], om_data: Mapping[datetime, Any]) -> dict:
-        merged = _select(local_data, tz, set(local_days))
+        merged = _select(local_data, tz, local_selected)
         if open_meteo is not None:
             merged.update(_select(om_data, tz, om_days))
         return dict(sorted(merged.items()))

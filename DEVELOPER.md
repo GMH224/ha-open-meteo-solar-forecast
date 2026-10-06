@@ -13,6 +13,7 @@ Applies from v0.1.33.2. Architecture and rationale:
 | `local_provider.py` | **HA glue for the local source**: live entity reads, history store, `LocalOpenMeteoSolarForecast` adapter, Fusion companion discovery | yes |
 | `local_source.py` | **pure engine**: validation, solar geometry, downscaling, transposition, payload synthesis, coverage | **no** (enforced by test) |
 | `hybrid.py` | **pure**: day-level join of local and Open-Meteo estimates (0.1.33.3) | **no** (enforced by test) |
+| `errors.py` | **pure**: sanitising error text before it reaches attributes/diagnostics (0.1.33.4) | **no** |
 | `sensor.py` | forecast sensors + `forecast_source` diagnostic sensor; day masking | yes |
 | `diagnostics.py` | export incl. `source` block | yes |
 | `energy.py`, `recorder.py` | unchanged | yes |
@@ -26,7 +27,9 @@ suite before changing the pin.**
 ## Rules for this codebase
 
 1. **Open-Meteo mode must not change** unless that is the explicit purpose
-   of a release. Every local-mode code path branches on
+   of a release. (0.1.33.4 relaxed this, with the owner's consent, for the
+   safety fixes of the external audit; each deviation is listed in its
+   release audit.) Every local-mode code path branches on
    `weather_source == "local"`; parity tests and mutation M25 guard this.
 2. `local_source.py` stays pure (no HA, no I/O, no clock). Pass `now` in.
 3. Untrusted input (entity states/attributes) is validated before use;
@@ -35,6 +38,11 @@ suite before changing the pin.**
    Home Assistant as an unhandled exception.
 5. Every new rule gets a test that fails when the rule is removed, and an
    entry in `tests/mutation/run_mutations.py`.
+6. Every externally controlled collection has a size bound and every time
+   series a time window (0.1.33.4). Mutation testing cannot find a *missing*
+   rule; review each new input against this list.
+7. Error text reaching an attribute or the diagnostics goes through
+   `errors.sanitize_error`.
 
 ## Running the tests
 
@@ -60,6 +68,7 @@ Test files:
 | `tests/test_translations_local.py` | translation coverage of every new UI string and error key |
 | `tests/test_hybrid.py` | hybrid join rule, pure (0.1.33.3) |
 | `tests/test_hybrid_integration.py` | real HA: hybrid cases, Open-Meteo cache/failure, provenance, parity, release process (0.1.33.3) |
+| `tests/test_v0_1_33_4_audit_remediation.py` | regression tests for every remediated external-audit finding (0.1.33.4) |
 | `tests/test_config_flow.py` | pre-existing wizard tests (with HA-version shim) |
 | `tests/fusion_fixtures.py` | builders for the exact Fusion v0.3.3 attribute shape |
 | `tests/mutation/run_mutations.py` | mutation record |

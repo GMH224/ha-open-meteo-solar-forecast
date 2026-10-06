@@ -40,6 +40,7 @@ from .const import (
     LOCAL_MIN_FUTURE_HOURS,
     LOGGER,
 )
+from .errors import sanitize_error
 from .local_source import (
     HourRecord,
     LocalSnapshot,
@@ -56,6 +57,8 @@ from .local_source import (
 
 HISTORY_STORAGE_VERSION = 1
 SERVICE_TIMEOUT_SECONDS = 20  # below the coordinator's 60 s bound
+HISTORY_LOAD_ATTEMPTS = 3  # OMSF-013: retry a failed store read, bounded
+SNOW_HOLD = timedelta(hours=24)  # OMSF-005: last valid snow depth kept this long
 
 
 class LocalDataError(HomeAssistantError):
@@ -109,7 +112,7 @@ def validate_irradiance_entity(hass: HomeAssistant, entity_id: str | None) -> st
     series = state.attributes.get("hourly_forecast")
     if not isinstance(series, list) or not series:
         return "irradiance_no_series"
-    records, _ = parse_irradiance_series(series)
+    records, _ = parse_irradiance_series(series, dt_util.utcnow())
     if not any(rec.has_average for rec in records.values()):
         return "irradiance_no_series"
     return None
@@ -123,7 +126,13 @@ def validate_weather_entity(hass: HomeAssistant, entity_id: str | None) -> str |
     if state is None:
         return "weather_not_found"
     features = state.attributes.get(ATTR_SUPPORTED_FEATURES, 0) or 0
-    if not int(features) & WeatherEntityFeature.FORECAST_HOURLY:
+    # OMSF-015: a malformed attribute is a validation result, not a crash.
+    if isinstance(features, bool) or not isinstance(features, int):
+        try:
+            features = int(features)
+        except (TypeError, ValueError):
+            return "weather_no_hourly"
+    if not features & WeatherEntityFeature.FORECAST_HOURLY:
         return "weather_no_hourly"
     return None
 
@@ -210,6 +219,8 @@ class LocalWeatherReader:
             hass, HISTORY_STORAGE_VERSION, history_storage_key(entry_id)
         )
         self._loaded = False
+        self._load_attempts = 0
+        self._snow_last_valid: tuple[datetime, float] | None = None
         self._hours: dict[datetime, HourRecord] = {}
         self._temps: dict[datetime, float] = {}
         self.last_report: dict[str, Any] = {}
@@ -219,12 +230,24 @@ class LocalWeatherReader:
     async def _async_load(self) -> None:
         if self._loaded:
             return
-        self._loaded = True
+        self._load_attempts += 1
         try:
             stored = await self._store.async_load()
         except Exception as err:  # noqa: BLE001 - corrupt store must not block setup
-            LOGGER.warning("Discarding unreadable local history: %s", err)
+            # OMSF-013: a transient failure is retried on the next refresh,
+            # at most HISTORY_LOAD_ATTEMPTS times; then continue without.
+            if self._load_attempts >= HISTORY_LOAD_ATTEMPTS:
+                self._loaded = True
+                LOGGER.warning(
+                    "Discarding unreadable local history after %s attempts: %s",
+                    self._load_attempts,
+                    sanitize_error(err),
+                )
+            else:
+                LOGGER.debug("Local history not readable yet (attempt %s): %s",
+                             self._load_attempts, sanitize_error(err))
             return
+        self._loaded = True
         if not stored:
             return
         try:
@@ -236,7 +259,7 @@ class LocalWeatherReader:
                 datetime.fromisoformat(key).astimezone(timezone.utc): float(value)
                 for key, value in stored.get("temperatures", {}).items()
             }
-        except (KeyError, TypeError, ValueError) as err:
+        except (AttributeError, KeyError, TypeError, ValueError) as err:
             LOGGER.warning("Discarding malformed local history: %s", err)
             self._hours, self._temps = {}, {}
 
@@ -258,8 +281,10 @@ class LocalWeatherReader:
             raise LocalDataError(f"{self.irradiance_entity_id} does not exist")
         if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN) and "hourly_forecast" not in state.attributes:
             raise LocalDataError(f"{self.irradiance_entity_id} is {state.state}")
-        records, report = parse_irradiance_series(state.attributes.get("hourly_forecast"))
+        records, report = parse_irradiance_series(state.attributes.get("hourly_forecast"), now)
         problem = series_freshness_problem(records, now, LOCAL_MIN_FUTURE_HOURS)
+        if report.oversize:
+            problem = report.rejected[0].removeprefix("[-1] ")
         details = {
             "entity_id": self.irradiance_entity_id,
             "received": report.received,
@@ -294,11 +319,11 @@ class LocalWeatherReader:
                     return_response=True,
                 )
             forecast = (response or {}).get(self.weather_entity_id, {}).get("forecast")
-            temps, rejected = parse_temperature_forecast(forecast, unit)
+            temps, rejected = parse_temperature_forecast(forecast, unit, dt_util.utcnow())
             details["received"] = len(forecast) if isinstance(forecast, list) else 0
             details["rejected"] = rejected
         except Exception as err:  # noqa: BLE001 - degrade to current temperature
-            details["error"] = str(err) or type(err).__name__
+            details["error"] = sanitize_error(err)
         current, _ = parse_temperature_forecast(
             [{"datetime": dt_util.utcnow().isoformat(), "temperature": state.attributes.get("temperature")}],
             unit,
@@ -309,17 +334,31 @@ class LocalWeatherReader:
 
     def _read_snow_depth(self) -> tuple[float, dict[str, Any]]:
         if not self.snow_depth_entity_id:
-            return 0.0, {"configured": False}
+            return 0.0, {"configured": False, "quality": "not_configured"}
         state = self.hass.states.get(self.snow_depth_entity_id)
         depth = None
         if state is not None:
             depth = parse_snow_depth(state.state, state.attributes.get("unit_of_measurement"))
         details = {"configured": True, "entity_id": self.snow_depth_entity_id, "depth_m": depth}
-        if depth is None:
-            # Unknown snow is treated as no snow (no derating). Flagged.
-            details["problem"] = "snow depth unavailable, treated as 0"
-            return 0.0, details
-        return depth, details
+        now = dt_util.utcnow()
+        if depth is not None:
+            self._snow_last_valid = (now, depth)
+            details["quality"] = "sensor"
+            return depth, details
+        # OMSF-005: hold the last valid value for up to 24 h (snow cover does
+        # not vanish between two refreshes); only after that is unknown
+        # snow treated as no snow. Both cases are flagged.
+        if self._snow_last_valid is not None and now - self._snow_last_valid[0] <= SNOW_HOLD:
+            held_at, held = self._snow_last_valid
+            details.update(
+                depth_m=held,
+                quality="held",
+                problem=f"snow depth unavailable, holding value from {held_at.isoformat()}",
+            )
+            return held, details
+        details["quality"] = "unavailable_assumed_0"
+        details["problem"] = "snow depth unavailable, treated as 0"
+        return 0.0, details
 
     async def async_snapshot(self, now: datetime | None = None) -> LocalSnapshot:
         """Read everything and return an immutable snapshot.
@@ -334,7 +373,7 @@ class LocalWeatherReader:
         try:
             fresh_hours, report["irradiance"] = self._read_irradiance(now)
         except LocalDataError as err:
-            report["irradiance"] = {"entity_id": self.irradiance_entity_id, "problem": str(err)}
+            report["irradiance"] = {"entity_id": self.irradiance_entity_id, "problem": sanitize_error(err)}
             raise
 
         fresh_temps, report["temperature"] = await self._async_read_temperatures()
@@ -344,6 +383,12 @@ class LocalWeatherReader:
                 f"no temperature available from {self.weather_entity_id}"
             )
         snow_m, report["snow_depth"] = self._read_snow_depth()
+        # OMSF-006: summarise which inputs are degraded, for the
+        # forecast_source sensor (diagnostics carry the details).
+        report["quality"] = {
+            "temperature": "forecast" if fresh_temps else "current_value_fallback",
+            "snow_depth": report["snow_depth"].get("quality"),
+        }
 
         local_now = dt_util.as_local(now)
         keep_from = dt_util.as_utc(

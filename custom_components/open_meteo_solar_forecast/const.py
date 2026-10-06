@@ -53,13 +53,22 @@ ACTIVE_SOURCE_LOCAL = "local"
 ACTIVE_SOURCE_FALLBACK = "open_meteo_fallback"
 ACTIVE_SOURCE_RETAINED = "retained"
 ACTIVE_SOURCE_HYBRID = "hybrid"  # local days + Open-Meteo days in one forecast
+# 0.1.33.4 (audit OMSF-003): retained forecast older than the limit below;
+# the forecast sensors are unavailable, only the source sensor stays up.
+ACTIVE_SOURCE_STALE = "stale"
 ACTIVE_SOURCES = (
     ACTIVE_SOURCE_OPEN_METEO,
     ACTIVE_SOURCE_LOCAL,
     ACTIVE_SOURCE_FALLBACK,
     ACTIVE_SOURCE_RETAINED,
     ACTIVE_SOURCE_HYBRID,
+    ACTIVE_SOURCE_STALE,
 )
+
+# 0.1.33.4 (audit OMSF-003, owner decision 6 Oct 2026): a retained forecast is
+# served for at most this long after the last successful refresh, in every
+# mode. After that the forecast sensors become unavailable.
+RETAINED_MAX_AGE_HOURS = 6
 
 OPEN_METEO_UPDATE_MINUTES = 30
 LOCAL_UPDATE_MINUTES = 10

@@ -87,20 +87,21 @@ def test_a_local_day_wins_even_where_open_meteo_has_it():
     assert sources[D0] == DAY_SOURCE_LOCAL and merged.wh_days[D0] == 24 * 111
 
 
-def test_partial_local_data_outside_complete_days_is_dropped():
-    local = _estimate(CEST, D0, 3, 111)  # local has data for 3 days ...
-    merged, sources = merge_hybrid(local, None, {D0 + timedelta(days=1)})  # ... one complete
-    assert set(sources) == {D0 + timedelta(days=1)}
-    assert set(merged.wh_days) == {D0 + timedelta(days=1)}
-    assert {m.astimezone(CEST).date() for m in merged.watts} == {D0 + timedelta(days=1)}
+def test_partial_local_days_keep_their_data_but_get_no_day_source():
+    """0.1.33.4 (V-1 / OMSF-004): changed from 0.1.33.3, which dropped this
+    data — with Open-Meteo down, "power now" then read 0 W in daylight."""
+    local = _estimate(CEST, D0, 3, 111)  # local data for 3 days, one complete
+    merged, sources = merge_hybrid(local, None, {D0 + timedelta(days=1)})
+    assert sources == {D0 + timedelta(days=1): DAY_SOURCE_LOCAL}
+    for d in range(3):  # data of the two partial days is kept
+        day = D0 + timedelta(days=d)
+        assert [v for m, v in merged.wh_period.items() if m.date() == day] == [111] * 24
 
-
-def test_without_open_meteo_only_the_local_days_remain():
+def test_without_open_meteo_only_complete_local_days_are_listed_as_sources():
     local = _estimate(CEST, D0, 2, 111)
     merged, sources = merge_hybrid(local, None, {D0})
     assert sources == {D0: DAY_SOURCE_LOCAL}
-    assert set(merged.wh_days) == {D0}
-
+    assert set(merged.wh_days) == {D0, D0 + timedelta(days=1)}  # partial day kept as data
 
 def test_an_incomplete_open_meteo_day_is_not_used():
     local = _estimate(CEST, D0, 1, 111)
@@ -110,10 +111,14 @@ def test_an_incomplete_open_meteo_day_is_not_used():
     assert set(merged.wh_days) == {D0}
 
 
-def test_a_23_hour_dst_day_counts_as_complete():
-    om = _estimate(CEST, D0, 1, 222, hours=[h for h in range(24) if h != 2])
-    assert complete_open_meteo_days(om, CEST) == {D0}
-
+def test_a_day_with_23_hours_is_not_complete():
+    """0.1.33.4 (OMSF-011): changed from 0.1.33.3. Days are grouped in a
+    fixed offset, so every complete day has 24 hours; 23 means one is
+    missing and the day total would be undercounted."""
+    om = _estimate(CEST, D0, 1, 222, hours=[h for h in range(24) if h != 12])
+    assert complete_open_meteo_days(om, CEST) == set()
+    full = _estimate(CEST, D0, 1, 222)
+    assert complete_open_meteo_days(full, CEST) == {D0}
 
 def test_open_meteo_in_another_offset_is_regrouped_into_local_days():
     """Open-Meteo's timezone=auto may differ from Home Assistant's. Days and
@@ -156,6 +161,15 @@ def test_merged_series_are_sorted_in_time():
     assert list(sources) == sorted(sources)
 
 
-def test_nothing_from_either_source_is_an_empty_forecast():
+def test_nothing_complete_keeps_partial_local_data_but_lists_no_source():
+    """0.1.33.4 (V-1): changed from 0.1.33.3, which returned an empty
+    forecast here. The coordinator additionally refuses a truly empty one."""
     merged, sources = merge_hybrid(_estimate(CEST, D0, 1, 111), None, set())
-    assert sources == {} and merged.wh_days == {} and merged.watts == {}
+    assert sources == {}
+    assert merged.wh_days == {D0: 24 * 111} and merged.watts
+
+
+def test_no_local_data_and_no_open_meteo_is_an_empty_forecast():
+    empty = Estimate(watts={}, wh_period={}, wh_days={}, wh_period_15m={}, api_timezone=CEST)
+    merged, sources = merge_hybrid(empty, None, set())
+    assert sources == {} and merged.watts == {} and merged.wh_period == {}

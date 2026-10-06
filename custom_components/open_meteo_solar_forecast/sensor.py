@@ -288,6 +288,12 @@ class ForecastSourceSensorEntity(
         self._attr_device_info = _device_info(entry_id)
 
     @property
+    def available(self) -> bool:
+        """Always available: it must be able to report "stale" while the
+        forecast sensors are unavailable (0.1.33.4, OMSF-003)."""
+        return True
+
+    @property
     def native_value(self) -> str | None:
         return self.coordinator.active_source
 
@@ -301,6 +307,12 @@ class ForecastSourceSensorEntity(
             "last_error": self.coordinator.last_source_error,
             # 0.1.33.3, hybrid mode: state of the Open-Meteo part.
             "hybrid_open_meteo": self.coordinator.hybrid_status,
+            # 0.1.33.4 (OMSF-005/006): degraded inputs of the last local read.
+            "data_quality": (
+                self.coordinator.local_reader.last_report.get("quality")
+                if self.coordinator.local_reader is not None
+                else None
+            ),
         }
 
 

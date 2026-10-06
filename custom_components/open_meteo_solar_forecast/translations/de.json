@@ -117,7 +117,8 @@
           "local": "Lokal",
           "open_meteo_fallback": "Open-Meteo (Ausweichquelle)",
           "retained": "Beibehalten (letzte gültige Prognose)",
-          "hybrid": "Hybrid (lokal + Open-Meteo)"
+          "hybrid": "Hybrid (lokal + Open-Meteo)",
+          "stale": "Veraltet (seit über 6 h keine neue Prognose)"
         }
       }
     }

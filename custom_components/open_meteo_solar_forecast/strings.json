@@ -228,7 +228,8 @@
           "local": "Local",
           "open_meteo_fallback": "Open-Meteo (fallback)",
           "retained": "Retained (last good forecast)",
-          "hybrid": "Hybrid (local + Open-Meteo)"
+          "hybrid": "Hybrid (local + Open-Meteo)",
+          "stale": "Stale (no fresh forecast for over 6 h)"
         }
       }
     }
@@ -238,6 +239,10 @@
       "name": "Update Array Location",
       "description": "Update the array location to match that of the provided coordinates, or to the configured HA home location if no coordinates are provided.",
       "fields": {
+        "config_entry_id": {
+          "name": "Configuration entry",
+          "description": "The Open-Meteo Solar Forecast entry to update. Required when more than one entry is configured."
+        },
         "location_override": {
           "name": "Location Override",
           "description": "Optional location to set the array to, if omitted the array will be set to the HA home location."
