@@ -12,6 +12,7 @@ Applies from v0.1.33.2. Architecture and rationale:
 | `coordinator.py` | refresh cycle; source selection; retained forecast; fallback policy; day coverage | yes |
 | `local_provider.py` | **HA glue for the local source**: live entity reads, history store, `LocalOpenMeteoSolarForecast` adapter, Fusion companion discovery | yes |
 | `local_source.py` | **pure engine**: validation, solar geometry, downscaling, transposition, payload synthesis, coverage | **no** (enforced by test) |
+| `hybrid.py` | **pure**: day-level join of local and Open-Meteo estimates (0.1.33.3) | **no** (enforced by test) |
 | `sensor.py` | forecast sensors + `forecast_source` diagnostic sensor; day masking | yes |
 | `diagnostics.py` | export incl. `source` block | yes |
 | `energy.py`, `recorder.py` | unchanged | yes |
@@ -57,9 +58,20 @@ Test files:
 | `tests/test_local_physics_validation.py` | against pvlib: solar position, sunrise/sunset, Hay–Davies, end-to-end daily energy through the library |
 | `tests/test_local_integration.py` | real HA: setup, failure modes, fallback, history, restart, snow, diagnostics, multi-array, config/options flow, Open-Meteo parity |
 | `tests/test_translations_local.py` | translation coverage of every new UI string and error key |
+| `tests/test_hybrid.py` | hybrid join rule, pure (0.1.33.3) |
+| `tests/test_hybrid_integration.py` | real HA: hybrid cases, Open-Meteo cache/failure, provenance, parity, release process (0.1.33.3) |
 | `tests/test_config_flow.py` | pre-existing wizard tests (with HA-version shim) |
 | `tests/fusion_fixtures.py` | builders for the exact Fusion v0.3.3 attribute shape |
 | `tests/mutation/run_mutations.py` | mutation record |
+
+## Releasing
+
+From 0.1.33.3 `hacs.json` has no `zip_release`: HACS installs the
+`custom_components/open_meteo_solar_forecast/` folder straight from the tag.
+A release is: bump `manifest.json` version, commit, create a GitHub release
+with a new tag. No asset upload. (0.1.33.2 still needed the manually attached
+zip; the inherited `release.yml` that built it is removed. Guarded by
+`test_hacs_installs_from_the_tag_without_a_release_zip`.)
 
 ## Honest gaps
 

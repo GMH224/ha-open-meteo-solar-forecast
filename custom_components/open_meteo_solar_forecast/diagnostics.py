@@ -68,6 +68,15 @@ def _source_diagnostics(coordinator: Any) -> dict[str, Any]:
         "fallback_to_open_meteo": getattr(coordinator, "fallback_to_open_meteo", None),
         "last_error": getattr(coordinator, "last_source_error", None),
         "last_successful_update": last_update.isoformat() if last_update else None,
+        "day_sources": (
+            {
+                day.isoformat(): src
+                for day, src in sorted(coordinator.day_sources.items())
+            }
+            if getattr(coordinator, "day_sources", None) is not None
+            else None
+        ),
+        "hybrid_open_meteo": getattr(coordinator, "hybrid_status", None),
         "update_interval_seconds": (
             coordinator.update_interval.total_seconds()
             if coordinator.update_interval

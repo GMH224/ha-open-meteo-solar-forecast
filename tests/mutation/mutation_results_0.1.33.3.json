@@ -1,0 +1,461 @@
+{
+  "release": "0.1.33.3",
+  "date": "2026-10-06",
+  "runner": "tests/mutation/run_mutations.py",
+  "results": [
+    {
+      "id": "M01",
+      "description": "average labelled at the quarter START instead of its end",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_physics_validation.py::test_daily_energy_through_the_library_matches_a_one_minute_reference[30-90-0.015]"
+      ]
+    },
+    {
+      "id": "M02",
+      "description": "first label gets an average (covers the hour before the data)",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_the_first_label_carries_no_average_because_it_would_cover_the_previous_hour"
+      ]
+    },
+    {
+      "id": "M03",
+      "description": "clearness index not clamped",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_an_implausible_hour_average_is_clamped_and_counted"
+      ]
+    },
+    {
+      "id": "M04",
+      "description": "D-01 regression: hour clearness on a finer grid than the quarters",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_horizontal_plane_quarter_averages_conserve_hourly_ghi_and_dhi"
+      ]
+    },
+    {
+      "id": "M05",
+      "description": "D-02 regression: low-sun beam not reassigned to diffuse",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_horizontal_plane_quarter_averages_conserve_hourly_ghi_and_dhi"
+      ]
+    },
+    {
+      "id": "M06",
+      "description": "anisotropy index not clamped to 1",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_physics_validation.py::test_anisotropy_is_clamped_where_the_input_implies_dni_above_e0"
+      ]
+    },
+    {
+      "id": "M07",
+      "description": "azimuth convention: Open-Meteo value used as compass bearing",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_short_local_horizon_is_completed_by_open_meteo_day_by_day"
+      ]
+    },
+    {
+      "id": "M08",
+      "description": "ground-reflected term dropped",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_physics_validation.py::test_hay_davies_transposition_matches_pvlib[7-30-0]"
+      ]
+    },
+    {
+      "id": "M09",
+      "description": "published instants ignored (hour-average anchor only)",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_instant_values_at_hour_starts_reproduce_the_published_instants"
+      ]
+    },
+    {
+      "id": "M10",
+      "description": "diffuse-exceeds-global check removed",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_an_invalid_average_triple_is_dropped_but_the_instant_survives[change2]"
+      ]
+    },
+    {
+      "id": "M11",
+      "description": "incomplete triple accepted",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_an_invalid_average_triple_is_dropped_but_the_instant_survives[change4]"
+      ]
+    },
+    {
+      "id": "M12",
+      "description": "booleans accepted as numbers",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_an_invalid_average_triple_is_dropped_but_the_instant_survives[change8]"
+      ]
+    },
+    {
+      "id": "M13",
+      "description": "non-hour-aligned period_start accepted",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_entries_with_bad_timestamps_are_rejected_and_reported[change2-not on a full hour]"
+      ]
+    },
+    {
+      "id": "M14",
+      "description": "stale-series check removed",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_stale_local_data_in_hybrid_mode_does_not_silently_become_open_meteo"
+      ]
+    },
+    {
+      "id": "M15",
+      "description": "current-hour requirement removed",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_a_series_without_the_current_hour_average_is_refused"
+      ]
+    },
+    {
+      "id": "M16",
+      "description": "history resurrects future hours from cache",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_history_never_resurrects_a_future_hour_the_source_dropped"
+      ]
+    },
+    {
+      "id": "M17",
+      "description": "history not pruned",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_history_is_pruned_before_keep_from"
+      ]
+    },
+    {
+      "id": "M18",
+      "description": "Fahrenheit not converted",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_temperature_forecast_converts_fahrenheit_and_kelvin"
+      ]
+    },
+    {
+      "id": "M19",
+      "description": "temperature gaps bridged without limit",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_temperature_gaps_longer_than_three_hours_are_not_bridged"
+      ]
+    },
+    {
+      "id": "M20",
+      "description": "snow depth not applied",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_snow_depth_reduces_output_only_when_snow_derating_is_enabled"
+      ]
+    },
+    {
+      "id": "M21",
+      "description": "polar day/night can yield sunset == sunrise",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_polar_night_and_polar_day_never_produce_a_zero_length_day"
+      ]
+    },
+    {
+      "id": "M22",
+      "description": "fallback to Open-Meteo on by default",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_fallback_is_off_when_the_option_is_absent"
+      ]
+    },
+    {
+      "id": "M23",
+      "description": "fallback taken although disabled",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_stale_local_data_in_hybrid_mode_does_not_silently_become_open_meteo"
+      ]
+    },
+    {
+      "id": "M24",
+      "description": "local refresh interval 30 min",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_short_local_horizon_is_completed_by_open_meteo_day_by_day"
+      ]
+    },
+    {
+      "id": "M25",
+      "description": "Open-Meteo refresh interval changed",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_open_meteo_mode_is_unchanged_and_never_reads_local_entities"
+      ]
+    },
+    {
+      "id": "M26",
+      "description": "retained-source state not reported",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_hybrid_retains_and_recovers_like_local_mode"
+      ],
+      "note": "re-run after its pattern was updated to the 0.1.33.3 code (first application: NOT APPLIED, matches=0)"
+    },
+    {
+      "id": "M27",
+      "description": "history never persisted",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_history_survives_a_restart"
+      ]
+    },
+    {
+      "id": "M28",
+      "description": "Fusion companion suffix wrong",
+      "file": "custom_components/open_meteo_solar_forecast/const.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_config_flow_hybrid_asks_for_the_local_entities"
+      ]
+    },
+    {
+      "id": "M29",
+      "description": "missing temperature accepted (no current temperature either)",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_no_temperature_at_all_is_refused"
+      ]
+    },
+    {
+      "id": "M30",
+      "description": "history merge skipped (only the fresh series is used)",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_energy_today_keeps_elapsed_hours_after_the_source_moves_on"
+      ]
+    },
+    {
+      "id": "M31",
+      "description": "D-05 regression: day sensors not masked in local mode",
+      "file": "custom_components/open_meteo_solar_forecast/sensor.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_open_meteo_down_keeps_the_local_days_and_marks_the_rest_unknown"
+      ]
+    },
+    {
+      "id": "M32",
+      "description": "night hours treated as daylight in day coverage",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_today_becomes_known_once_history_covers_the_morning"
+      ]
+    },
+    {
+      "id": "M33",
+      "description": "fallback keeps the local coverage mask on Open-Meteo data",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_fallback_clears_the_local_day_mask"
+      ],
+      "note": "re-run after its pattern was updated to the 0.1.33.3 code (first application: NOT APPLIED, matches=0)"
+    },
+    {
+      "id": "M34",
+      "description": "day coverage not persisted with the retained forecast",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_day_coverage_survives_a_restart_with_the_retained_forecast"
+      ]
+    },
+    {
+      "id": "M35",
+      "description": "D-06 regression: weather service call unbounded",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_a_hung_weather_service_degrades_within_the_bound"
+      ]
+    },
+    {
+      "id": "M36",
+      "description": "D-07 regression: missing stored coverage masks every day",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_a_retained_fallback_forecast_is_not_masked_after_restart"
+      ],
+      "note": "re-run after its pattern was updated to the 0.1.33.3 code (first application: NOT APPLIED, matches=0)"
+    },
+    {
+      "id": "M37",
+      "description": "parity: Open-Meteo failure message changed",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_open_meteo_mode_failure_text_and_logging_are_unchanged"
+      ]
+    },
+    {
+      "id": "M38",
+      "description": "hybrid: Open-Meteo overrides a complete local day",
+      "file": "custom_components/open_meteo_solar_forecast/hybrid.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid.py::test_complete_local_days_come_from_local_and_all_other_days_from_open_meteo"
+      ]
+    },
+    {
+      "id": "M39",
+      "description": "hybrid: incomplete Open-Meteo days accepted",
+      "file": "custom_components/open_meteo_solar_forecast/hybrid.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid.py::test_an_incomplete_open_meteo_day_is_not_used"
+      ]
+    },
+    {
+      "id": "M40",
+      "description": "hybrid: days taken in the source's own timezone",
+      "file": "custom_components/open_meteo_solar_forecast/hybrid.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid.py::test_open_meteo_in_another_offset_is_regrouped_into_local_days"
+      ],
+      "note": "ESCAPED in the main run; test_open_meteo_in_another_offset_is_regrouped_into_local_days strengthened, then re-run"
+    },
+    {
+      "id": "M41",
+      "description": "hybrid: Open-Meteo fetched every local cycle",
+      "file": "custom_components/open_meteo_solar_forecast/const.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_open_meteo_is_refreshed_every_30_minutes_not_every_cycle"
+      ]
+    },
+    {
+      "id": "M42",
+      "description": "hybrid: no cache after a failed refresh",
+      "file": "custom_components/open_meteo_solar_forecast/const.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_a_failed_open_meteo_refresh_uses_the_cache_for_three_hours"
+      ]
+    },
+    {
+      "id": "M43",
+      "description": "hybrid: cache used without age limit",
+      "file": "custom_components/open_meteo_solar_forecast/const.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_a_failed_open_meteo_refresh_uses_the_cache_for_three_hours"
+      ]
+    },
+    {
+      "id": "M44",
+      "description": "hybrid: Open-Meteo failure fails the whole refresh",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_open_meteo_down_keeps_the_local_days_and_marks_the_rest_unknown"
+      ]
+    },
+    {
+      "id": "M45",
+      "description": "hybrid behaves like local (no Open-Meteo days)",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_short_local_horizon_is_completed_by_open_meteo_day_by_day"
+      ]
+    },
+    {
+      "id": "M46",
+      "description": "hybrid not treated as a local-based source",
+      "file": "custom_components/open_meteo_solar_forecast/const.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_short_local_horizon_is_completed_by_open_meteo_day_by_day"
+      ]
+    },
+    {
+      "id": "M47",
+      "description": "day sources not persisted",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_day_sources_survive_a_restart"
+      ]
+    },
+    {
+      "id": "M48",
+      "description": "0.1.33.2 retained coverage not read after upgrade",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_a_retained_forecast_from_0_1_33_2_is_read_as_local_days"
+      ]
+    },
+    {
+      "id": "M49",
+      "description": "source attribute added in Open-Meteo mode",
+      "file": "custom_components/open_meteo_solar_forecast/sensor.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_open_meteo_mode_day_sensors_have_no_source_attribute"
+      ]
+    },
+    {
+      "id": "M50",
+      "description": "release process: zip_release restored",
+      "file": "hacs.json",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_hacs_installs_from_the_tag_without_a_release_zip"
+      ]
+    }
+  ]
+}

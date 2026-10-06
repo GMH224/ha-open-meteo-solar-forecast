@@ -43,7 +43,7 @@ from .const import (
     CONF_LOCAL_WEATHER_ENTITY,
     CONF_WEATHER_SOURCE,
     DOMAIN,
-    SOURCE_LOCAL,
+    LOCAL_BASED_SOURCES,
     SOURCE_OPEN_METEO,
     TRACKING_OPTIONS,
     WEATHER_SOURCES,
@@ -351,7 +351,7 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._common = user_input
             self._arrays = []
-            if user_input.get(CONF_WEATHER_SOURCE) == SOURCE_LOCAL:
+            if user_input.get(CONF_WEATHER_SOURCE) in LOCAL_BASED_SOURCES:
                 return await self.async_step_local()
             return await self.async_step_array()
 
@@ -437,7 +437,7 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
                     CONF_MAX_SNOWCOVER_DEPTH_CM: self._common[
                         CONF_MAX_SNOWCOVER_DEPTH_CM
                     ],
-                    **(self._local if source == SOURCE_LOCAL else {}),
+                    **(self._local if source in LOCAL_BASED_SOURCES else {}),
                     **{key: per_array[key] for key in PER_ARRAY_KEYS},
                 },
             )
@@ -472,7 +472,7 @@ class OpenMeteoSolarForecastOptionFlowHandler(OptionsFlow):
             self._common = user_input
             self._arrays = []
             self._stored_arrays = _expand_arrays(self.config_entry)
-            if user_input.get(CONF_WEATHER_SOURCE) == SOURCE_LOCAL:
+            if user_input.get(CONF_WEATHER_SOURCE) in LOCAL_BASED_SOURCES:
                 return await self.async_step_local()
             return await self.async_step_array()
 
@@ -569,7 +569,7 @@ class OpenMeteoSolarForecastOptionFlowHandler(OptionsFlow):
                     CONF_MAX_SNOWCOVER_DEPTH_CM: self._common[
                         CONF_MAX_SNOWCOVER_DEPTH_CM
                     ],
-                    **(self._local if source == SOURCE_LOCAL else {}),
+                    **(self._local if source in LOCAL_BASED_SOURCES else {}),
                     **{key: per_array[key] for key in PER_ARRAY_KEYS},
                 },
             )

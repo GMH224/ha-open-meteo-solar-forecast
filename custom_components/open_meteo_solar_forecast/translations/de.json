@@ -10,7 +10,7 @@
         },
         "description": "Allgemeine Einstellungen für alle PV-Anlagen. Klicke auf „Weiter“, um Standort, Ausrichtung, Leistung und weitere Einstellungen jeder Anlage zu bearbeiten.",
         "data_description": {
-          "weather_source": "Open-Meteo: Wettermodell der Open-Meteo-API (Standard). Lokal: Strahlung und Temperatur aus Home-Assistant-Entitäten, z. B. SwissWeather Fusion; ohne Internetzugriff, Aktualisierung alle 10 Minuten."
+          "weather_source": "Open-Meteo: Wettermodell der Open-Meteo-API (Standard). Lokal: Strahlung und Temperatur aus Home-Assistant-Entitäten, z. B. SwissWeather Fusion; ohne Internetzugriff, Aktualisierung alle 10 Minuten. Hybrid: lokal für jeden Tag, den die lokalen Daten vollständig abdecken, Open-Meteo für alle übrigen Tage (Übergang um Mitternacht)."
         }
       },
       "array": {
@@ -116,7 +116,8 @@
           "open_meteo": "Open-Meteo",
           "local": "Lokal",
           "open_meteo_fallback": "Open-Meteo (Ausweichquelle)",
-          "retained": "Beibehalten (letzte gültige Prognose)"
+          "retained": "Beibehalten (letzte gültige Prognose)",
+          "hybrid": "Hybrid (lokal + Open-Meteo)"
         }
       }
     }
@@ -138,7 +139,7 @@
         },
         "description": "Allgemeine Einstellungen für alle PV-Anlagen. Klicke auf „Weiter“, um Standort, Ausrichtung, Leistung und weitere Einstellungen jeder Anlage zu bearbeiten.",
         "data_description": {
-          "weather_source": "Open-Meteo: Wettermodell der Open-Meteo-API (Standard). Lokal: Strahlung und Temperatur aus Home-Assistant-Entitäten, z. B. SwissWeather Fusion; ohne Internetzugriff, Aktualisierung alle 10 Minuten."
+          "weather_source": "Open-Meteo: Wettermodell der Open-Meteo-API (Standard). Lokal: Strahlung und Temperatur aus Home-Assistant-Entitäten, z. B. SwissWeather Fusion; ohne Internetzugriff, Aktualisierung alle 10 Minuten. Hybrid: lokal für jeden Tag, den die lokalen Daten vollständig abdecken, Open-Meteo für alle übrigen Tage (Übergang um Mitternacht)."
         }
       },
       "array": {
@@ -177,7 +178,8 @@
     "weather_source": {
       "options": {
         "open_meteo": "Open-Meteo-API",
-        "local": "Lokal (Home-Assistant-Entitäten)"
+        "local": "Lokal (Home-Assistant-Entitäten)",
+        "hybrid": "Hybrid (lokal, danach Open-Meteo)"
       }
     }
   }

@@ -2,15 +2,15 @@
 
 This custom component integrates the [open-meteo-solar-forecast](https://github.com/rany2/open-meteo-solar-forecast) with Home Assistant. It allows you to see what your solar panels may produce in the future.
 
-> **GMH224 fork — v0.1.33.2.** Adds a **local weather source**: the forecast
+> **GMH224 fork — v0.1.33.3.** Adds a **local weather source**: the forecast
 > can be computed from Home Assistant entities (SwissWeather Fusion ≥ 0.3.3)
-> instead of the Open-Meteo API, with no internet access. Open-Meteo mode is
-> unchanged and remains the default. 175 tests (+144 subtests) on a real Home
-> Assistant, physics validated against pvlib, 37/37 mutations caught.
+> instead of the Open-Meteo API, with no internet access — and, from 0.1.33.3,
+> a **hybrid** mode: local for every day the local data covers, Open-Meteo for
+> the rest. Open-Meteo mode is unchanged and remains the default.
 > ICS documents:
 > [architecture](OMSF_v0_1_33_2_Architecture_ICS.md) ·
-> [release audit](omsf_v0.1.33.2_release_audit.md) ·
-> [test report](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) ·
+> release audits [0.1.33.3](omsf_v0.1.33.3_release_audit.md), [0.1.33.2](omsf_v0.1.33.2_release_audit.md) ·
+> test reports [0.1.33.3](omsf_v0_1_33_3_ICS_quality_bug_testing_report.md), [0.1.33.2](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) ·
 > [developer notes](DEVELOPER.md) · [changelog](CHANGELOG.md)
 
 ## Installation
@@ -43,8 +43,12 @@ The first setup page has a **Weather data source** choice:
 - **Local (Home Assistant entities)**: radiation and temperature come from
   entities in your Home Assistant. Refreshed every 10 minutes; no internet
   access.
+- **Hybrid (local, Open-Meteo beyond)** *(0.1.33.3)*: every day the local data
+  covers completely comes from it; every other day comes from Open-Meteo.
+  The switch happens at midnight, so no day mixes two sources. Each day sensor
+  has a `source` attribute (`local` / `open_meteo`).
 
-With *Local*, a second page asks for:
+With *Local* or *Hybrid*, a second page asks for:
 
 | Field | Notes |
 |---|---|
@@ -64,11 +68,13 @@ Things to know in local mode:
   `local`, `open_meteo`, `open_meteo_fallback` or `retained` (last good
   forecast kept because the source is unusable — see its `last_error`
   attribute).
-- Days the local data does not fully cover are **unknown** rather than 0.
-  With Fusion's ~5-day horizon, *5/6/7 days from now* are usually unknown.
-  On the first day after installation, *today* is unknown until the
-  integration has seen the whole day (Fusion does not publish past hours;
-  the integration keeps them itself from then on).
+- In **Local** mode, days the local data does not fully cover are **unknown**
+  rather than 0 (some dashboard cards draw unknown as 0.0). On the first day
+  after installation, *today* is unknown until the integration has seen the
+  whole day (Fusion does not publish past hours; the integration keeps them
+  itself from then on). **Hybrid** mode fills these days from Open-Meteo.
+- In **Hybrid** mode the Open-Meteo days use the model set on the first page.
+  MeteoSwiss models end after 5 days; for days 6–7 use `best_match`.
 - The radiation values are model output without bias correction.
 
 Details: [architecture document](OMSF_v0_1_33_2_Architecture_ICS.md).

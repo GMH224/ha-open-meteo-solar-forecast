@@ -38,16 +38,21 @@ from .const import (
     CONF_LOCAL_WEATHER_ENTITY,
     CONF_WEATHER_SOURCE,
     ACTIVE_SOURCE_FALLBACK,
+    ACTIVE_SOURCE_HYBRID,
     ACTIVE_SOURCE_LOCAL,
     ACTIVE_SOURCE_OPEN_METEO,
     ACTIVE_SOURCE_RETAINED,
     DOMAIN,
+    HYBRID_OPEN_METEO_MAX_AGE_MINUTES,
+    HYBRID_OPEN_METEO_REFRESH_MINUTES,
+    LOCAL_BASED_SOURCES,
     LOCAL_UPDATE_MINUTES,
     LOGGER,
     OPEN_METEO_UPDATE_MINUTES,
-    SOURCE_LOCAL,
+    SOURCE_HYBRID,
     SOURCE_OPEN_METEO,
 )
+from .hybrid import DAY_SOURCE_LOCAL, DAY_SOURCE_OPEN_METEO, merge_hybrid
 from .local_provider import (
     LocalDataError,
     LocalOpenMeteoSolarForecast,
@@ -324,15 +329,22 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         self.fallback_to_open_meteo: bool = bool(
             entry.options.get(CONF_LOCAL_FALLBACK_OPEN_METEO, False)
         )
+        # Local and hybrid both read the local entities.
+        self.uses_local: bool = self.weather_source in LOCAL_BASED_SOURCES
         self.active_source: str | None = None
         self.last_source_error: str | None = None
         self.last_local_stats: list[dict[str, Any]] = []
-        # Local dates fully covered by valid radiation (local mode only).
-        # None = not applicable, sensors behave exactly as in 0.1.33.1.
+        # Dates the current forecast covers completely (local/hybrid only)
+        # and which source each one came from. None = not applicable:
+        # sensors behave exactly as in 0.1.33.1.
         self.local_complete_dates: set[date] | None = None
+        self.day_sources: dict[date, str] | None = None
+        # Hybrid: cached Open-Meteo estimate and the state of that part.
+        self._hybrid_om_cache: tuple[datetime, Estimate] | None = None
+        self.hybrid_status: dict[str, Any] | None = None
         self.local_reader: LocalWeatherReader | None = None
         self.local_forecast: LocalOpenMeteoSolarForecast | None = None
-        if self.weather_source == SOURCE_LOCAL:
+        if self.uses_local:
             first_lat = latitude[0] if _is_sequence(latitude) else latitude
             first_lon = longitude[0] if _is_sequence(longitude) else longitude
             self.local_reader = LocalWeatherReader(
@@ -382,19 +394,30 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             return None
 
         self._last_successful_update = dt_util.parse_datetime(last_update)
-        if self.weather_source == SOURCE_LOCAL:
+        if self.uses_local:
             # Absent key: the retained forecast came from the Open-Meteo
             # fallback, so nothing is masked (D-07). Malformed: mask all.
+            raw_sources = stored.get("day_sources")
             raw_dates = stored.get("local_complete_dates")
             try:
-                self.local_complete_dates = (
-                    None
-                    if raw_dates is None
-                    else {date.fromisoformat(day) for day in raw_dates}
-                )
-            except (TypeError, ValueError):
-                self.local_complete_dates = set()
+                if raw_sources is not None:
+                    self._set_day_sources(
+                        {date.fromisoformat(day): src for day, src in raw_sources.items()}
+                    )
+                elif raw_dates is not None:  # written by 0.1.33.2
+                    self._set_day_sources(
+                        {date.fromisoformat(day): DAY_SOURCE_LOCAL for day in raw_dates}
+                    )
+                else:
+                    self._set_day_sources(None)
+            except (AttributeError, TypeError, ValueError):
+                self._set_day_sources({})
         return estimate
+
+    def _set_day_sources(self, sources: dict[date, str] | None) -> None:
+        """Set per-day provenance and the derived masking set together."""
+        self.day_sources = sources
+        self.local_complete_dates = None if sources is None else set(sources)
 
     def _save_retained_estimate(self, estimate: Estimate) -> None:
         """Persist the forecast so retention survives restarts and reloads."""
@@ -413,6 +436,10 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             data["local_complete_dates"] = sorted(
                 day.isoformat() for day in self.local_complete_dates
             )
+        if self.day_sources is not None:
+            data["day_sources"] = {
+                day.isoformat(): src for day, src in sorted(self.day_sources.items())
+            }
         self._store.async_delay_save(lambda: data, 60)
 
     async def _async_update_data(self) -> Estimate:
@@ -444,12 +471,12 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
                 retained = await self._async_load_retained_estimate()
             if retained is None:
                 self.active_source = None
-                if self.weather_source != SOURCE_LOCAL:
+                if not self.uses_local:
                     # Message unchanged from 0.1.33.1 (parity invariant R6).
                     raise UpdateFailed(f"Error communicating with API: {err}") from err
                 raise UpdateFailed(f"Error reading local weather source: {err}") from err
 
-            if self.weather_source != SOURCE_LOCAL:
+            if not self.uses_local:
                 # Logging unchanged from 0.1.33.1 (parity invariant R6).
                 LOGGER.warning(
                     "Unable to refresh forecast data, using retained forecast",
@@ -465,9 +492,12 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             self.active_source = ACTIVE_SOURCE_RETAINED
             return retained
 
-        if self.weather_source == SOURCE_LOCAL and (
+        if self.uses_local and (
             self.active_source == ACTIVE_SOURCE_RETAINED
-            or (self.active_source == ACTIVE_SOURCE_FALLBACK and source == ACTIVE_SOURCE_LOCAL)
+            or (
+                self.active_source == ACTIVE_SOURCE_FALLBACK
+                and source in (ACTIVE_SOURCE_LOCAL, ACTIVE_SOURCE_HYBRID)
+            )
         ):
             LOGGER.info("Forecast refresh recovered, source: %s", source)
         self.active_source = source
@@ -489,7 +519,7 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         local failure either fall back to Open-Meteo (only if explicitly
         enabled) or propagate, so the caller serves the retained forecast.
         """
-        if self.weather_source != SOURCE_LOCAL:
+        if not self.uses_local:
             return await self._async_fetch_open_meteo(), ACTIVE_SOURCE_OPEN_METEO
 
         if self.local_reader is None or self.local_forecast is None:
@@ -502,14 +532,13 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
                 self.local_forecast.prepare(self.hass, snapshot)
                 estimate = await self.local_forecast.estimate()
             self.last_local_stats = list(self.local_forecast.local_stats or [])
-            self.local_complete_dates = await self.hass.async_add_executor_job(
+            local_days = await self.hass.async_add_executor_job(
                 complete_local_dates,
                 snapshot.hours,
                 self.local_reader.latitude,
                 self.local_reader.longitude,
                 snapshot.utc_offset_seconds,
             )
-            return estimate, ACTIVE_SOURCE_LOCAL
         except Exception as err:
             if isinstance(err, LocalDataError):
                 message = f"local source unusable: {err}"
@@ -521,8 +550,77 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
                 LOGGER.warning("%s; falling back to Open-Meteo", message)
             self.last_source_error = message
             estimate = await self._async_fetch_open_meteo()
-            self.local_complete_dates = None  # Open-Meteo data: no masking
+            self._set_day_sources(None)  # Open-Meteo data: no masking
             return estimate, ACTIVE_SOURCE_FALLBACK
+
+        if self.weather_source != SOURCE_HYBRID:
+            self._set_day_sources({day: DAY_SOURCE_LOCAL for day in local_days})
+            return estimate, ACTIVE_SOURCE_LOCAL
+
+        # Hybrid (0.1.33.3): whole local days from the local estimate, every
+        # other day from Open-Meteo. The Open-Meteo part never fails the
+        # refresh: without it, the local days are still served.
+        open_meteo = await self._async_hybrid_open_meteo()
+        merged, sources = merge_hybrid(estimate, open_meteo, set(local_days))
+        self._set_day_sources(sources)
+        if self.hybrid_status is not None:
+            self.hybrid_status["open_meteo_days"] = sorted(
+                day.isoformat() for day, src in sources.items()
+                if src == DAY_SOURCE_OPEN_METEO
+            )
+        if DAY_SOURCE_OPEN_METEO in sources.values():
+            return merged, ACTIVE_SOURCE_HYBRID
+        return merged, ACTIVE_SOURCE_LOCAL
+
+    async def _async_hybrid_open_meteo(self) -> Estimate | None:
+        """Open-Meteo estimate for the hybrid days, cached.
+
+        Refreshed at most every HYBRID_OPEN_METEO_REFRESH_MINUTES. If a
+        refresh fails, a cached estimate younger than
+        HYBRID_OPEN_METEO_MAX_AGE_MINUTES is still used; otherwise None
+        (the Open-Meteo days become unknown). Never raises.
+        """
+        now = dt_util.utcnow()
+        cache = self._hybrid_om_cache
+        if cache is not None and now - cache[0] < timedelta(
+            minutes=HYBRID_OPEN_METEO_REFRESH_MINUTES
+        ):
+            self.hybrid_status = {
+                "open_meteo": "cached",
+                "fetched_at": cache[0].isoformat(),
+                "error": None,
+            }
+            return cache[1]
+        try:
+            estimate = await self._async_fetch_open_meteo()
+        except Exception as err:  # noqa: BLE001 - local days must survive
+            error = str(err) or type(err).__name__
+            if cache is not None and now - cache[0] < timedelta(
+                minutes=HYBRID_OPEN_METEO_MAX_AGE_MINUTES
+            ):
+                if (self.hybrid_status or {}).get("open_meteo") != "stale_cache":
+                    LOGGER.warning(
+                        "Hybrid: Open-Meteo refresh failed, using the estimate from %s: %s",
+                        cache[0],
+                        error,
+                    )
+                self.hybrid_status = {
+                    "open_meteo": "stale_cache",
+                    "fetched_at": cache[0].isoformat(),
+                    "error": error,
+                }
+                return cache[1]
+            if (self.hybrid_status or {}).get("open_meteo") != "unavailable":
+                LOGGER.warning(
+                    "Hybrid: Open-Meteo unavailable, days beyond the local data are unknown: %s",
+                    error,
+                )
+            self._hybrid_om_cache = None
+            self.hybrid_status = {"open_meteo": "unavailable", "fetched_at": None, "error": error}
+            return None
+        self._hybrid_om_cache = (now, estimate)
+        self.hybrid_status = {"open_meteo": "fresh", "fetched_at": now.isoformat(), "error": None}
+        return estimate
 
     @property
     def last_successful_update(self) -> datetime | None:

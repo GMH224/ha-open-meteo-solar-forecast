@@ -1,5 +1,31 @@
 # Changelog — GMH224 fork
 
+## 0.1.33.3 — 2026-10-06
+
+### Added
+- **Hybrid weather source** (`hybrid`): every local day the local data covers
+  completely comes from the local computation, every other day from
+  Open-Meteo, joined at local midnight. Open-Meteo is queried every 30 minutes
+  (cached between the 10-minute local refreshes); if it fails, a cached
+  estimate is used for up to 3 hours, then those days become unknown while the
+  local days continue.
+- `source` attribute (`local` / `open_meteo`) on the day sensors in local and
+  hybrid mode; `forecast_source` state `hybrid`, attribute `hybrid_open_meteo`;
+  diagnostics `day_sources`.
+- Tests for hybrid mode (28 new), 13 new mutations.
+
+### Changed
+- **Release process:** `hacs.json` no longer uses `zip_release` / `filename`;
+  HACS installs directly from the tag, no zip upload needed. The inherited
+  `release.yml` workflow is removed.
+- Translations (EN/DE) for the hybrid option and state.
+
+### Unchanged
+- Open-Meteo mode and local mode behave as in 0.1.33.2 (local mode adds only
+  the `source` attribute).
+
+Full account: `omsf_v0.1.33.3_release_audit.md`.
+
 ## 0.1.33.2 — 2026-10-06
 
 ### Added

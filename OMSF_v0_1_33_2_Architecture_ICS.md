@@ -1,12 +1,40 @@
-# Open-Meteo Solar Forecast (GMH224 fork) — v0.1.33.2 Architecture (ICS)
+# Open-Meteo Solar Forecast (GMH224 fork) — v0.1.33.x Architecture (ICS)
 
 **Feature:** local weather source — PV forecast from Home Assistant entities
-(SwissWeather Fusion ≥ 0.3.3) instead of the Open-Meteo API.
-**Date:** 6 October 2026
+(SwissWeather Fusion ≥ 0.3.3) instead of the Open-Meteo API; from 0.1.33.3
+also a hybrid of both.
+**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3)
 **Companion documents:**
 [`omsf_v0.1.33.2_release_audit.md`](omsf_v0.1.33.2_release_audit.md) (what changed, defects, safety analysis),
 [`omsf_v0_1_33_2_ICS_quality_bug_testing_report.md`](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) (tests, mutation record, gaps),
 [`DEVELOPER.md`](DEVELOPER.md) (module map, how to run tests).
+
+---
+
+## 0a. Update for 0.1.33.3 — hybrid mode and release process
+
+**Why.** The first live run (6 Oct 2026, owner's installation, three entries
+East/South/West) showed SwissWeather Fusion delivering only ~45 hours of
+radiation: ICON-CH2 (120 h) was not yet contributing, so only ICON-CH1 (33 h)
+and ICON-D2 (~48 h) remained. In local mode that leaves one fully covered day;
+days 2–7 are correctly *unknown* (§5.7), which the owner's dashboard card
+draws as 0.0 kWh. Even with CH2 working, days 6–7 are beyond any MeteoSwiss
+model.
+
+**What.** A third weather source, **hybrid**: every local day that the local
+data covers completely comes from the local computation; every other day
+comes from Open-Meteo. The two are joined **by whole days at local midnight**
+(owner decision), where PV output is zero — no visible step, no day mixing two
+sources. Details §5.9; failure modes F12–F14 in §6; requirements R13–R17.
+
+**Release process.** `hacs.json` no longer sets `zip_release`; HACS installs
+straight from the tagged `custom_components/` folder like the owner's other
+repositories. The inherited `release.yml` workflow (which built the zip and
+never ran on the fork) is removed (R17).
+
+Unchanged: Open-Meteo mode and local mode behave exactly as in 0.1.33.2. The
+only visible addition in local mode is a `source` attribute (`local`) on the
+day sensors.
 
 ---
 
@@ -73,6 +101,11 @@ same retained-forecast fingerprint, no migration.
 | R10 | Panel geometry (tilt, azimuth, GTI) owned by the solar layer, per array | Fusion v0.3.3 design | `transpose_hay_davies` per array from the library's request parameters | `test_hay_davies_transposition_matches_pvlib`, `test_multi_array_east_west_uses_one_snapshot_and_two_geometries` |
 | R11 | Sensors must not report a made-up value for days without local data | derived (D-05) | `local_complete_dates` + sensor masking | `test_days_beyond_the_local_horizon_are_unknown_not_zero`; mutations M31, M32 |
 | R12 | Operator can see which source produced the forecast | derived (ICS) | `sensor.<name>_forecast_source`, diagnostics `source` block | `test_stale_local_data_later_serves_the_retained_forecast_and_says_so`, `test_diagnostics_report_the_source_and_redact_coordinates` |
+| R13 | 0.1.33.3: days beyond the local horizon are filled from Open-Meteo (hybrid) | owner | `hybrid.merge_hybrid`, coordinator hybrid branch | `test_short_local_horizon_is_completed_by_open_meteo_day_by_day`, `test_long_local_horizon_uses_open_meteo_only_beyond_it`; M45 |
+| R14 | Join by whole local days at midnight; a day never mixes sources | owner | `merge_hybrid` | `test_no_day_ever_mixes_two_sources`, `test_the_seam_is_at_midnight_with_no_day_split`; M38, M40 |
+| R15 | Open-Meteo part refreshed every 30 min, not every local cycle; its failure never removes the local days | derived | `_async_hybrid_open_meteo` | `test_open_meteo_is_refreshed_every_30_minutes_not_every_cycle`, `test_open_meteo_down_keeps_the_local_days_and_marks_the_rest_unknown`, `test_a_failed_open_meteo_refresh_uses_the_cache_for_three_hours`; M41–M44 |
+| R16 | Each day shows its source | derived (ICS) | `source` attribute on day sensors, `day_sources` in diagnostics, `hybrid` state | `test_short_local_horizon_…`, `test_diagnostics_show_the_day_sources_and_open_meteo_state`, `test_open_meteo_mode_day_sensors_have_no_source_attribute`; M49 |
+| R17 | Releases install via HACS without a manually attached zip | owner (0.1.33.2 backlog item 7) | `hacs.json`, `release.yml` removed | `test_hacs_installs_from_the_tag_without_a_release_zip`; M50 |
 
 ---
 
@@ -276,6 +309,57 @@ library derates linearly to zero at the configured maximum snow cover depth.
 Unavailable snow depth is treated as **no snow** and flagged in diagnostics
 (fail-open towards an optimistic forecast; see L-5).
 
+### 5.9 Hybrid mode (0.1.33.3)
+
+Module `hybrid.py` (pure, no Home Assistant import — enforced by test).
+
+**Day selection.** For each local calendar day (Home Assistant's UTC offset at
+refresh time):
+
+1. **Local** if the day is in `complete_local_dates` (§5.7): every daylight
+   hour has a valid local average.
+2. Otherwise **Open-Meteo**, if the Open-Meteo estimate has at least 23 hourly
+   values in that local day (23 admits a DST day; the library omits hours with
+   missing model data, so a model that ends mid-day yields an incomplete day).
+3. Otherwise the day is absent → day sensors *unknown* (as in local mode).
+
+Consequences worth stating: *today* comes from Open-Meteo until the local
+history covers the whole day (first day after installation); a day the local
+data covers only partly is taken entirely from Open-Meteo, not spliced.
+
+**Join.** Watts, hourly and 15-minute energy are taken per day from the
+selected source and re-expressed in the local estimate's timezone; daily
+totals are recomputed from the selected hours exactly as the library computes
+them (Σ hourly average power). This stays correct if Open-Meteo's
+`timezone=auto` offset differs from Home Assistant's. The join is at local
+midnight, where PV output is zero, so the power curve has no step.
+
+**Open-Meteo part.** Uses the entry's own Open-Meteo settings (base URL,
+**model**, API key) through the unchanged library path. Fetched at most every
+30 minutes and cached between the 10-minute local refreshes, so the request
+load equals Open-Meteo mode. A failed fetch never fails the refresh: a cached
+estimate up to 3 hours old is used (`stale_cache`); after that the Open-Meteo
+days become unknown (`unavailable`) and the forecast continues with the local
+days. Warnings are logged on transitions only.
+
+**Local part failing.** Exactly as local mode: retained forecast, or — only
+with *Fall back to Open-Meteo* enabled — a full Open-Meteo forecast
+(`open_meteo_fallback`, no day masking).
+
+**Provenance.** `day_sources` (per day `local`/`open_meteo`) is exposed as a
+`source` attribute on the day sensors, in diagnostics, and persisted with the
+retained forecast (the 0.1.33.2 `local_complete_dates` key is still read on
+upgrade). `forecast_source` reads `hybrid` when at least one Open-Meteo day is
+in the forecast, `local` when none is (e.g. Open-Meteo unavailable); its
+attribute `hybrid_open_meteo` gives `fresh` / `cached` / `stale_cache` /
+`unavailable`, the fetch time, the error and the Open-Meteo days.
+
+**Model choice matters again in hybrid mode.** The MeteoSwiss models end at
+5 days (ICON-CH2 120 h). An entry set to `meteoswiss_icon_ch2` (or a seamless
+MeteoSwiss model, if it does not extend beyond CH2 — *not verified*) cannot
+fill days 6–7; those stay unknown. `best_match` blends global models and
+reaches the full horizon.
+
 ---
 
 ## 6. Failure modes and behaviour
@@ -293,6 +377,9 @@ Unavailable snow depth is treated as **no snow** and flagged in diagnostics
 | F9 | Unexpected exception in synthesis/library | generic catch in local path | as F1 (contained, never escapes to HA) | as F1 | `last_error` names the exception type |
 | F10 | History store corrupt | load | discarded, warning logged, continues | — | log |
 | F11 | Retained forecast older than its horizon | — (pre-existing behaviour) | values decay to 0 | — | `forecast_source` = `retained`, `last_successful_update` |
+| F12 | Hybrid: Open-Meteo request fails, cache ≤ 3 h | exception in Open-Meteo part | local days + cached Open-Meteo days | same | `hybrid_open_meteo.open_meteo` = `stale_cache`, `error` |
+| F13 | Hybrid: Open-Meteo request fails, no usable cache | as F12 | local days only; other days unknown; refresh succeeds | same | `forecast_source` = `local`, `hybrid_open_meteo` = `unavailable` |
+| F14 | Hybrid: Open-Meteo model shorter than the horizon | incomplete days (< 23 h) | those days unknown | same | day sensors `unknown`; `open_meteo_days` lists what was used |
 
 Logging is transition-based: a warning when a failure starts (or fallback
 begins), an info line on recovery — not one line per 10-minute cycle.
@@ -348,6 +435,9 @@ Local step (only when `local`):
 | `local_fallback_open_meteo` | yes | `false` | use Open-Meteo when local data is unusable |
 
 Switching back to Open-Meteo removes the local keys from the options.
+**Hybrid** (0.1.33.3) uses the same local step; in hybrid mode the general
+step's Open-Meteo settings (base URL, model, API key) are also live, for the
+Open-Meteo days.
 
 ---
 
@@ -362,7 +452,9 @@ Switching back to Open-Meteo removes the local keys from the options.
 | L-5 | Snow depth is a persistence forecast | melting / new snow not anticipated | Fusion's own guidance: use as a Dec–Feb "covered" flag |
 | L-6 | Fixed UTC offset per refresh (as Open-Meteo `timezone=auto`) | across a DST change, day boundaries beyond it are off by 1 h until the next refresh after the change | identical to Open-Meteo mode |
 | L-7 | Temperature is location-level air temperature | cell-temperature model as in the library (Ross, "not so well cooled") | unchanged library behaviour |
-| L-8 | Today is unknown on the first day without history | no "today" value until history covers the morning | intentional (§5.7) |
+| L-8 | Today is unknown on the first day without history | no "today" value until history covers the morning | intentional (§5.7); in hybrid mode today comes from Open-Meteo instead |
+| L-9 | Hybrid: Open-Meteo days limited by the entry's model | days 6–7 unknown with MeteoSwiss-only models | choose `best_match` for the hybrid entries (§5.9) |
+| L-10 | Hybrid: a partly local day is taken entirely from Open-Meteo | the local data for that day's covered hours is not used | owner decision: whole-day join, no daylight seam |
 
 ---
 
@@ -375,7 +467,9 @@ Switching back to Open-Meteo removes the local keys from the options.
 | Local mode silently reaches the internet | Low | Medium (ICS) | adapter design; network guard in every local test |
 | Open-Meteo mode regresses | Low | High | parity tests on library arguments, interval and fingerprint; mutation M25 |
 | Library upgrade changes `_request` signature or response fields | Medium (on upgrade) | High | requirement pinned `==0.1.32`; payload-shape test lists exactly the fields the library reads; re-run suite on any upgrade |
-| Users read "unknown" today as a fault | Medium | Low | documented (README, §5.7) |
+| Users read "unknown" today as a fault | Medium | Low | documented (README, §5.7); dashboard cards may draw unknown as 0 (observed live) — hybrid mode removes most unknown days |
+| Hybrid hides a local-source failure behind Open-Meteo days | Low | Medium | local failure is handled before the hybrid join (retained / explicit fallback); per-day `source` attribute shows what each day is |
+| Hybrid reintroduces internet access | Certain (by design) | Low–Medium (ICS) | opt-in mode; same request load as Open-Meteo mode; local and Open-Meteo modes unchanged |
 
 ---
 

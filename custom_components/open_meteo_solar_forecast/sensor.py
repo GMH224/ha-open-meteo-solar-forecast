@@ -299,6 +299,8 @@ class ForecastSourceSensorEntity(
             "fallback_to_open_meteo": self.coordinator.fallback_to_open_meteo,
             "last_successful_update": last.isoformat() if last else None,
             "last_error": self.coordinator.last_source_error,
+            # 0.1.33.3, hybrid mode: state of the Open-Meteo part.
+            "hybrid_open_meteo": self.coordinator.hybrid_status,
         }
 
 
@@ -406,7 +408,7 @@ class OpenMeteoSolarForecastSensorEntity(
                     f"Unexpected key {self.entity_description.key} for extra_state_attributes"
                 )
 
-            return {
+            attributes = {
                 ATTR_WATTS: {
                     watt_datetime.isoformat(): watt_value
                     for watt_datetime, watt_value in self.coordinator.data.watts.items()
@@ -423,5 +425,11 @@ class OpenMeteoSolarForecastSensorEntity(
                     if wh_datetime.date() == target_date
                 },
             }
+            # 0.1.33.3: which source produced this day (local / hybrid mode
+            # only; Open-Meteo mode attributes are unchanged).
+            day_sources = self.coordinator.day_sources
+            if day_sources is not None:
+                attributes["source"] = day_sources.get(target_date)
+            return attributes
 
         return None

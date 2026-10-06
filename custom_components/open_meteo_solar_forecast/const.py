@@ -35,7 +35,12 @@ ATTR_WH_PERIOD_15M = "wh_period_15m"
 CONF_WEATHER_SOURCE = "weather_source"
 SOURCE_OPEN_METEO = "open_meteo"
 SOURCE_LOCAL = "local"
-WEATHER_SOURCES = (SOURCE_OPEN_METEO, SOURCE_LOCAL)
+# 0.1.33.3: local days + Open-Meteo for every day the local data does not
+# fully cover, joined at local midnight (hybrid.py).
+SOURCE_HYBRID = "hybrid"
+WEATHER_SOURCES = (SOURCE_OPEN_METEO, SOURCE_LOCAL, SOURCE_HYBRID)
+# Sources that read the local entities.
+LOCAL_BASED_SOURCES = (SOURCE_LOCAL, SOURCE_HYBRID)
 
 CONF_LOCAL_WEATHER_ENTITY = "local_weather_entity"
 CONF_LOCAL_IRRADIANCE_ENTITY = "local_irradiance_entity"
@@ -47,15 +52,22 @@ ACTIVE_SOURCE_OPEN_METEO = "open_meteo"
 ACTIVE_SOURCE_LOCAL = "local"
 ACTIVE_SOURCE_FALLBACK = "open_meteo_fallback"
 ACTIVE_SOURCE_RETAINED = "retained"
+ACTIVE_SOURCE_HYBRID = "hybrid"  # local days + Open-Meteo days in one forecast
 ACTIVE_SOURCES = (
     ACTIVE_SOURCE_OPEN_METEO,
     ACTIVE_SOURCE_LOCAL,
     ACTIVE_SOURCE_FALLBACK,
     ACTIVE_SOURCE_RETAINED,
+    ACTIVE_SOURCE_HYBRID,
 )
 
 OPEN_METEO_UPDATE_MINUTES = 30
 LOCAL_UPDATE_MINUTES = 10
+# Hybrid: Open-Meteo part refreshed at its normal cadence, not every local
+# cycle; a cached Open-Meteo estimate is used for at most this long when a
+# refresh fails, after which the Open-Meteo days become unknown.
+HYBRID_OPEN_METEO_REFRESH_MINUTES = 30
+HYBRID_OPEN_METEO_MAX_AGE_MINUTES = 180
 
 # A local series must reach at least this many hours past the current hour.
 LOCAL_MIN_FUTURE_HOURS = 6

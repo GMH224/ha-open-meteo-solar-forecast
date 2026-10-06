@@ -324,3 +324,13 @@ report §5.
 4. Snow-dependent albedo (L-4); snow persistence (L-5).
 5. Optional SRF-vs-ICON disagreement flag (architecture §11.4).
 6. Capture a live Fusion attribute and add it as a fixture.
+7. **Release process (owner requirement, next version, mandatory).**
+   Remove `zip_release` and `filename` from `hacs.json` so HACS installs
+   straight from the tagged `custom_components/` folder, like all of the
+   owner's other repositories. Background (6 Oct 2026): the setting was
+   inherited from upstream, where a release workflow builds the zip; the
+   fork's workflows were never enabled, so the 0.1.33.2 release had no
+   asset and HACS failed with "Could not download". It was fixed by
+   attaching the zip by hand. Acceptance: a release with only GitHub's
+   source archives installs through HACS. Decide whether `release.yml` is
+   then deleted or kept (it would attach an unused zip).

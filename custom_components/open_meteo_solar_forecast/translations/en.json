@@ -15,7 +15,7 @@
         "data_description": {
           "inverter_power": "The AC capacity of a single inverter shared by all arrays in Watt (0 = no limit). Ignored if any array has its own inverter capacity set on the array pages.",
           "max_snowcover_depth_cm": "If greater than 0, the snow cover depth which results in zero module power.",
-          "weather_source": "Open-Meteo: weather model from the Open-Meteo API (default). Local: radiation and temperature from Home Assistant entities, e.g. SwissWeather Fusion; no internet access, refreshed every 10 minutes."
+          "weather_source": "Open-Meteo: weather model from the Open-Meteo API (default). Local: radiation and temperature from Home Assistant entities, e.g. SwissWeather Fusion; no internet access, refreshed every 10 minutes. Hybrid: local for every day the local data fully covers, Open-Meteo for all other days (joined at midnight)."
         }
       },
       "array": {
@@ -137,7 +137,8 @@
           "open_meteo": "Open-Meteo",
           "local": "Local",
           "open_meteo_fallback": "Open-Meteo (fallback)",
-          "retained": "Retained (last good forecast)"
+          "retained": "Retained (last good forecast)",
+          "hybrid": "Hybrid (local + Open-Meteo)"
         }
       }
     }
@@ -164,7 +165,7 @@
         "data_description": {
           "inverter_power": "The AC capacity of a single inverter shared by all arrays in Watt (0 = no limit). Ignored if any array has its own inverter capacity set on the array pages.",
           "max_snowcover_depth_cm": "If greater than 0, the snow cover depth which results in zero module power.",
-          "weather_source": "Open-Meteo: weather model from the Open-Meteo API (default). Local: radiation and temperature from Home Assistant entities, e.g. SwissWeather Fusion; no internet access, refreshed every 10 minutes."
+          "weather_source": "Open-Meteo: weather model from the Open-Meteo API (default). Local: radiation and temperature from Home Assistant entities, e.g. SwissWeather Fusion; no internet access, refreshed every 10 minutes. Hybrid: local for every day the local data fully covers, Open-Meteo for all other days (joined at midnight)."
         }
       },
       "array": {
@@ -239,7 +240,8 @@
     "weather_source": {
       "options": {
         "open_meteo": "Open-Meteo API",
-        "local": "Local (Home Assistant entities)"
+        "local": "Local (Home Assistant entities)",
+        "hybrid": "Hybrid (local, Open-Meteo beyond)"
       }
     }
   }
