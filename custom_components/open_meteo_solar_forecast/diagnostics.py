@@ -55,4 +55,32 @@ async def async_get_config_entry_diagnostics(
         "account": {
             "timezone": coordinator.data.timezone,
         },
+        "source": _source_diagnostics(coordinator),
     }
+
+
+def _source_diagnostics(coordinator: Any) -> dict[str, Any]:
+    """Which weather source produced the data, and how healthy it is."""
+    last_update = getattr(coordinator, "last_successful_update", None)
+    result: dict[str, Any] = {
+        "configured": getattr(coordinator, "weather_source", None),
+        "active": getattr(coordinator, "active_source", None),
+        "fallback_to_open_meteo": getattr(coordinator, "fallback_to_open_meteo", None),
+        "last_error": getattr(coordinator, "last_source_error", None),
+        "last_successful_update": last_update.isoformat() if last_update else None,
+        "update_interval_seconds": (
+            coordinator.update_interval.total_seconds()
+            if coordinator.update_interval
+            else None
+        ),
+    }
+    reader = getattr(coordinator, "local_reader", None)
+    if reader is not None:
+        result["local"] = {
+            "weather_entity": reader.weather_entity_id,
+            "irradiance_entity": reader.irradiance_entity_id,
+            "snow_depth_entity": reader.snow_depth_entity_id,
+            "last_read": async_redact_data(reader.last_report, TO_REDACT),
+            "synthesis_per_array": getattr(coordinator, "last_local_stats", []),
+        }
+    return result

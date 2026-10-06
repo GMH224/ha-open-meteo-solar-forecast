@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -17,7 +17,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy, UnitOfPower
+from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -28,7 +28,13 @@ from homeassistant.util import slugify
 
 from open_meteo_solar_forecast.models import Estimate
 
-from .const import ATTR_WATTS, ATTR_WH_PERIOD, ATTR_WH_PERIOD_15M, DOMAIN
+from .const import (
+    ACTIVE_SOURCES,
+    ATTR_WATTS,
+    ATTR_WH_PERIOD,
+    ATTR_WH_PERIOD_15M,
+    DOMAIN,
+)
 from .coordinator import OpenMeteoSolarForecastDataUpdateCoordinator
 
 
@@ -230,14 +236,70 @@ async def async_setup_entry(
         entry.entry_id
     ]
 
-    async_add_entities(
+    entities: list[SensorEntity] = [
         OpenMeteoSolarForecastSensorEntity(
             entry_id=entry.entry_id,
             coordinator=coordinator,
             entity_description=entity_description,
         )
         for entity_description in SENSORS
+    ]
+    entities.append(
+        ForecastSourceSensorEntity(entry_id=entry.entry_id, coordinator=coordinator)
     )
+    async_add_entities(entities)
+
+
+def _device_info(entry_id: str) -> DeviceInfo:
+    return DeviceInfo(
+        entry_type=DeviceEntryType.SERVICE,
+        identifiers={(DOMAIN, entry_id)},
+        manufacturer="Open-Meteo",
+        name="Solar production forecast",
+        configuration_url="https://open-meteo.com",
+    )
+
+
+class ForecastSourceSensorEntity(
+    CoordinatorEntity[OpenMeteoSolarForecastDataUpdateCoordinator], SensorEntity
+):
+    """Which weather source produced the current forecast (0.1.33.2).
+
+    Diagnostic, so an operator can see at a glance whether the forecast is
+    live local data, Open-Meteo, a fallback, or a retained older forecast.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "forecast_source"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(ACTIVE_SOURCES)
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        *,
+        entry_id: str,
+        coordinator: OpenMeteoSolarForecastDataUpdateCoordinator,
+    ) -> None:
+        super().__init__(coordinator=coordinator)
+        service_slug = slugify(coordinator.config_entry.title) or entry_id
+        self.entity_id = f"{SENSOR_DOMAIN}.{service_slug}_forecast_source"
+        self._attr_unique_id = f"{entry_id}_forecast_source"
+        self._attr_device_info = _device_info(entry_id)
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.active_source
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        last = self.coordinator.last_successful_update
+        return {
+            "configured_source": self.coordinator.weather_source,
+            "fallback_to_open_meteo": self.coordinator.fallback_to_open_meteo,
+            "last_successful_update": last.isoformat() if last else None,
+            "last_error": self.coordinator.last_source_error,
+        }
 
 
 class OpenMeteoSolarForecastSensorEntity(
@@ -262,13 +324,7 @@ class OpenMeteoSolarForecastSensorEntity(
         self.entity_id = f"{SENSOR_DOMAIN}.{service_slug}_{entity_description.key}"
         self._attr_unique_id = f"{entry_id}_{entity_description.key}"
 
-        self._attr_device_info = DeviceInfo(
-            entry_type=DeviceEntryType.SERVICE,
-            identifiers={(DOMAIN, entry_id)},
-            manufacturer="Open-Meteo",
-            name="Solar production forecast",
-            configuration_url="https://open-meteo.com",
-        )
+        self._attr_device_info = _device_info(entry_id)
 
     async def _update_callback(self, now: datetime) -> None:
         """Update the entity without fetching data from server.
@@ -295,9 +351,29 @@ class OpenMeteoSolarForecastSensorEntity(
             )
         )
 
+    def _target_date(self) -> date | None:
+        """The local date a day-based sensor reports on, else None."""
+        key = self.entity_description.key
+        today = self.coordinator.data.now().date()
+        if key in ("energy_production_today", "power_highest_peak_time_today"):
+            return today
+        if key in ("energy_production_tomorrow", "power_highest_peak_time_tomorrow"):
+            return today + timedelta(days=1)
+        if key.startswith("energy_production_d"):
+            return today + timedelta(days=int(key[len("energy_production_d") :]))
+        return None
+
     @property
     def native_value(self) -> datetime | StateType:
         """Return the state of the sensor."""
+        # 0.1.33.2 (D-05): in local mode a day the local data does not fully
+        # cover is unknown, not 0 Wh or an undercount. In Open-Meteo mode
+        # local_complete_dates is None and nothing changes.
+        covered = self.coordinator.local_complete_dates
+        if covered is not None:
+            target = self._target_date()
+            if target is not None and target not in covered:
+                return None
         if self.entity_description.state is None:
             state: StateType | datetime = getattr(
                 self.coordinator.data, self.entity_description.key

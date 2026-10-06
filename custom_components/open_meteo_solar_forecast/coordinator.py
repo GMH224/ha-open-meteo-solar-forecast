@@ -32,9 +32,28 @@ from .const import (
     CONF_MODEL,
     CONF_MODULES_POWER,
     CONF_TRACKING,
+    CONF_LOCAL_FALLBACK_OPEN_METEO,
+    CONF_LOCAL_IRRADIANCE_ENTITY,
+    CONF_LOCAL_SNOW_DEPTH_ENTITY,
+    CONF_LOCAL_WEATHER_ENTITY,
+    CONF_WEATHER_SOURCE,
+    ACTIVE_SOURCE_FALLBACK,
+    ACTIVE_SOURCE_LOCAL,
+    ACTIVE_SOURCE_OPEN_METEO,
+    ACTIVE_SOURCE_RETAINED,
     DOMAIN,
+    LOCAL_UPDATE_MINUTES,
     LOGGER,
+    OPEN_METEO_UPDATE_MINUTES,
+    SOURCE_LOCAL,
+    SOURCE_OPEN_METEO,
 )
+from .local_provider import (
+    LocalDataError,
+    LocalOpenMeteoSolarForecast,
+    LocalWeatherReader,
+)
+from .local_source import complete_local_dates
 
 import numpy
 
@@ -274,28 +293,64 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             # Single array with its own inverter: behaves like a shared one.
             ac_kwp = array_ac_kwp
 
+        forecast_kwargs: dict[str, Any] = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "azimuth": azimuth,
+            "ac_kwp": ac_kwp,
+            "dc_kwp": dc_kwp,
+            "declination": declination,
+            "efficiency_factor": efficiency_factor,
+            "tracking": tracking,
+            "damping_morning": entry.options.get(CONF_DAMPING_MORNING, 0.0),
+            "damping_evening": entry.options.get(CONF_DAMPING_EVENING, 0.0),
+            "use_horizon": use_horizon,
+            "partial_shading": partial_shading,
+            "horizon_map": horizon_map,
+            "max_snowcover_depth_cm": entry.options.get(CONF_MAX_SNOWCOVER_DEPTH_CM, 0.0),
+        }
         self.forecast = OpenMeteoSolarForecast(
             api_key=api_key,
             session=async_get_clientsession(hass),
-            latitude=latitude,
-            longitude=longitude,
-            azimuth=azimuth,
             base_url=entry.options[CONF_BASE_URL],
-            ac_kwp=ac_kwp,
-            dc_kwp=dc_kwp,
-            declination=declination,
-            efficiency_factor=efficiency_factor,
-            tracking=tracking,
-            damping_morning=entry.options.get(CONF_DAMPING_MORNING, 0.0),
-            damping_evening=entry.options.get(CONF_DAMPING_EVENING, 0.0),
-            use_horizon=use_horizon,
-            partial_shading=partial_shading,
-            horizon_map=horizon_map,
-            max_snowcover_depth_cm=entry.options.get(CONF_MAX_SNOWCOVER_DEPTH_CM, 0.0),
             weather_model=entry.options.get(CONF_MODEL, "best_match"),
+            **forecast_kwargs,
         )
 
-        update_interval = timedelta(minutes=30)
+        # 0.1.33.2: optional local weather source (OMSF_v0_1_33_2_Architecture_ICS.md).
+        self.weather_source: str = entry.options.get(
+            CONF_WEATHER_SOURCE, SOURCE_OPEN_METEO
+        )
+        self.fallback_to_open_meteo: bool = bool(
+            entry.options.get(CONF_LOCAL_FALLBACK_OPEN_METEO, False)
+        )
+        self.active_source: str | None = None
+        self.last_source_error: str | None = None
+        self.last_local_stats: list[dict[str, Any]] = []
+        # Local dates fully covered by valid radiation (local mode only).
+        # None = not applicable, sensors behave exactly as in 0.1.33.1.
+        self.local_complete_dates: set[date] | None = None
+        self.local_reader: LocalWeatherReader | None = None
+        self.local_forecast: LocalOpenMeteoSolarForecast | None = None
+        if self.weather_source == SOURCE_LOCAL:
+            first_lat = latitude[0] if _is_sequence(latitude) else latitude
+            first_lon = longitude[0] if _is_sequence(longitude) else longitude
+            self.local_reader = LocalWeatherReader(
+                hass,
+                entry.entry_id,
+                weather_entity_id=entry.options[CONF_LOCAL_WEATHER_ENTITY],
+                irradiance_entity_id=entry.options[CONF_LOCAL_IRRADIANCE_ENTITY],
+                snow_depth_entity_id=entry.options.get(CONF_LOCAL_SNOW_DEPTH_ENTITY),
+                latitude=float(first_lat),
+                longitude=float(first_lon),
+            )
+            # Same physics parameters as the Open-Meteo instance; only the
+            # data request differs. No API key, URL or session: the local
+            # adapter never performs network I/O.
+            self.local_forecast = LocalOpenMeteoSolarForecast(**forecast_kwargs)
+            update_interval = timedelta(minutes=LOCAL_UPDATE_MINUTES)
+        else:
+            update_interval = timedelta(minutes=OPEN_METEO_UPDATE_MINUTES)
 
         super().__init__(hass, LOGGER, name=DOMAIN, update_interval=update_interval)
 
@@ -327,6 +382,18 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             return None
 
         self._last_successful_update = dt_util.parse_datetime(last_update)
+        if self.weather_source == SOURCE_LOCAL:
+            # Absent key: the retained forecast came from the Open-Meteo
+            # fallback, so nothing is masked (D-07). Malformed: mask all.
+            raw_dates = stored.get("local_complete_dates")
+            try:
+                self.local_complete_dates = (
+                    None
+                    if raw_dates is None
+                    else {date.fromisoformat(day) for day in raw_dates}
+                )
+            except (TypeError, ValueError):
+                self.local_complete_dates = set()
         return estimate
 
     def _save_retained_estimate(self, estimate: Estimate) -> None:
@@ -342,6 +409,10 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
                 None
             ).total_seconds(),
         }
+        if self.local_complete_dates is not None:
+            data["local_complete_dates"] = sorted(
+                day.isoformat() for day in self.local_complete_dates
+            )
         self._store.async_delay_save(lambda: data, 60)
 
     async def _async_update_data(self) -> Estimate:
@@ -361,26 +432,99 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
                     "Using stored forecast from %s, skipping fetch",
                     self._last_successful_update,
                 )
+                self.active_source = ACTIVE_SOURCE_RETAINED
                 return retained
 
         try:
-            async with asyncio.timeout(API_TIMEOUT_SECONDS):
-                estimate = await self.forecast.estimate()
+            estimate, source = await self._async_fetch_estimate()
         except Exception as err:
+            self.last_source_error = str(err) or type(err).__name__
             retained = self.data
             if retained is None:
                 retained = await self._async_load_retained_estimate()
             if retained is None:
-                raise UpdateFailed(f"Error communicating with API: {err}") from err
+                self.active_source = None
+                if self.weather_source != SOURCE_LOCAL:
+                    # Message unchanged from 0.1.33.1 (parity invariant R6).
+                    raise UpdateFailed(f"Error communicating with API: {err}") from err
+                raise UpdateFailed(f"Error reading local weather source: {err}") from err
 
-            LOGGER.warning(
-                "Unable to refresh forecast data, using retained forecast",
-                exc_info=err,
-            )
+            if self.weather_source != SOURCE_LOCAL:
+                # Logging unchanged from 0.1.33.1 (parity invariant R6).
+                LOGGER.warning(
+                    "Unable to refresh forecast data, using retained forecast",
+                    exc_info=err,
+                )
+            elif self.active_source != ACTIVE_SOURCE_RETAINED:
+                # Local mode refreshes every 10 min: log transitions only.
+                LOGGER.warning(
+                    "Local weather source unusable, keeping the forecast from %s: %s",
+                    self._last_successful_update,
+                    err,
+                )
+            self.active_source = ACTIVE_SOURCE_RETAINED
             return retained
 
+        if self.weather_source == SOURCE_LOCAL and (
+            self.active_source == ACTIVE_SOURCE_RETAINED
+            or (self.active_source == ACTIVE_SOURCE_FALLBACK and source == ACTIVE_SOURCE_LOCAL)
+        ):
+            LOGGER.info("Forecast refresh recovered, source: %s", source)
+        self.active_source = source
+        if source != ACTIVE_SOURCE_FALLBACK:
+            self.last_source_error = None
         self._last_successful_update = dt_util.utcnow()
         self._save_retained_estimate(estimate)
         return estimate
-    
-    
+
+    async def _async_fetch_open_meteo(self) -> Estimate:
+        async with asyncio.timeout(API_TIMEOUT_SECONDS):
+            return await self.forecast.estimate()
+
+    async def _async_fetch_estimate(self) -> tuple[Estimate, str]:
+        """Fetch a new estimate from the configured source.
+
+        Local mode: read and validate the local entities, then let the
+        library compute the estimate from the synthesised data. On any
+        local failure either fall back to Open-Meteo (only if explicitly
+        enabled) or propagate, so the caller serves the retained forecast.
+        """
+        if self.weather_source != SOURCE_LOCAL:
+            return await self._async_fetch_open_meteo(), ACTIVE_SOURCE_OPEN_METEO
+
+        if self.local_reader is None or self.local_forecast is None:
+            raise LocalDataError("local source not initialised")
+        try:
+            # One bound for the whole local path (D-06): entity reads, the
+            # weather service call and the synthesis together.
+            async with asyncio.timeout(API_TIMEOUT_SECONDS):
+                snapshot = await self.local_reader.async_snapshot()
+                self.local_forecast.prepare(self.hass, snapshot)
+                estimate = await self.local_forecast.estimate()
+            self.last_local_stats = list(self.local_forecast.local_stats or [])
+            self.local_complete_dates = await self.hass.async_add_executor_job(
+                complete_local_dates,
+                snapshot.hours,
+                self.local_reader.latitude,
+                self.local_reader.longitude,
+                snapshot.utc_offset_seconds,
+            )
+            return estimate, ACTIVE_SOURCE_LOCAL
+        except Exception as err:
+            if isinstance(err, LocalDataError):
+                message = f"local source unusable: {err}"
+            else:
+                message = f"local source failed: {type(err).__name__}: {err}"
+            if not self.fallback_to_open_meteo:
+                raise LocalDataError(message) from err
+            if self.active_source != ACTIVE_SOURCE_FALLBACK:
+                LOGGER.warning("%s; falling back to Open-Meteo", message)
+            self.last_source_error = message
+            estimate = await self._async_fetch_open_meteo()
+            self.local_complete_dates = None  # Open-Meteo data: no masking
+            return estimate, ACTIVE_SOURCE_FALLBACK
+
+    @property
+    def last_successful_update(self) -> datetime | None:
+        """UTC time of the last successful (non-retained) refresh."""
+        return self._last_successful_update

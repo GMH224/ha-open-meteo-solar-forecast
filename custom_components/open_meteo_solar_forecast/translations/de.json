@@ -5,9 +5,13 @@
         "data": {
           "api_key": "API-Schlüssel",
           "name": "Name",
-          "max_snowcover_depth_cm": "Wenn > 0, die Schneehöhe (cm), bei welcher das Modul keine Leistung mehr liefert."
+          "max_snowcover_depth_cm": "Wenn > 0, die Schneehöhe (cm), bei welcher das Modul keine Leistung mehr liefert.",
+          "weather_source": "Wetterdatenquelle"
         },
-        "description": "Allgemeine Einstellungen für alle PV-Anlagen. Klicke auf „Weiter“, um Standort, Ausrichtung, Leistung und weitere Einstellungen jeder Anlage zu bearbeiten."
+        "description": "Allgemeine Einstellungen für alle PV-Anlagen. Klicke auf „Weiter“, um Standort, Ausrichtung, Leistung und weitere Einstellungen jeder Anlage zu bearbeiten.",
+        "data_description": {
+          "weather_source": "Open-Meteo: Wettermodell der Open-Meteo-API (Standard). Lokal: Strahlung und Temperatur aus Home-Assistant-Entitäten, z. B. SwissWeather Fusion; ohne Internetzugriff, Aktualisierung alle 10 Minuten."
+        }
       },
       "array": {
         "data": {
@@ -23,7 +27,28 @@
           "add_another": "Weitere Anlage hinzufügen"
         },
         "description": "Einstellungen für PV-Anlage {array_number}. Aktiviere „Weitere Anlage hinzufügen“, um eine weitere Anlage zu konfigurieren."
+      },
+      "local": {
+        "description": "Lokale Wetterquelle. Wähle die Wetter-Entität mit der stündlichen Temperaturprognose. Bei SwissWeather Fusion (ab v0.3.3) werden Strahlungs- und Schneehöhensensor automatisch gefunden, wenn die Felder leer bleiben.",
+        "data": {
+          "local_weather_entity": "Wetter-Entität",
+          "local_irradiance_entity": "Sensor mit Strahlungsreihe",
+          "local_snow_depth_entity": "Schneehöhensensor",
+          "local_fallback_open_meteo": "Auf Open-Meteo ausweichen"
+        },
+        "data_description": {
+          "local_weather_entity": "Muss stündliche Prognosen (Temperatur) unterstützen.",
+          "local_irradiance_entity": "Sensor, dessen Attribut 'hourly_forecast' stündliche GHI/DNI/DHI enthält (SwissWeather Fusion: Solar irradiance GHI (hour average)). Leer lassen für automatische Erkennung.",
+          "local_snow_depth_entity": "Optional. Schneehöhe am Boden; wird nur verwendet, wenn die maximale Schneebedeckung grösser als 0 ist. Leer lassen für automatische Erkennung.",
+          "local_fallback_open_meteo": "Wenn die lokalen Daten fehlen oder veraltet sind, stattdessen Open-Meteo abfragen. Wenn aus, bleibt die letzte gültige Prognose erhalten (fail-safe, kein Internetzugriff)."
+        }
       }
+    },
+    "error": {
+      "weather_not_found": "Wetter-Entität nicht gefunden.",
+      "weather_no_hourly": "Diese Wetter-Entität liefert keine stündliche Prognose.",
+      "irradiance_not_found": "Strahlungssensor nicht gefunden (und für diese Wetter-Entität nicht automatisch erkennbar).",
+      "irradiance_no_series": "Der Sensor hat keine gültige 'hourly_forecast'-Reihe mit GHI/DNI/DHI."
     }
   },
   "entity": {
@@ -84,20 +109,37 @@
       },
       "power_production_next_30minutes": {
         "name": "Geschätzte Stromproduktion - nächste 30 Minuten"
+      },
+      "forecast_source": {
+        "name": "Prognosequelle",
+        "state": {
+          "open_meteo": "Open-Meteo",
+          "local": "Lokal",
+          "open_meteo_fallback": "Open-Meteo (Ausweichquelle)",
+          "retained": "Beibehalten (letzte gültige Prognose)"
+        }
       }
     }
   },
   "options": {
     "error": {
-      "invalid_api_key": "Ungültiger API-Schlüssel"
+      "invalid_api_key": "Ungültiger API-Schlüssel",
+      "weather_not_found": "Wetter-Entität nicht gefunden.",
+      "weather_no_hourly": "Diese Wetter-Entität liefert keine stündliche Prognose.",
+      "irradiance_not_found": "Strahlungssensor nicht gefunden (und für diese Wetter-Entität nicht automatisch erkennbar).",
+      "irradiance_no_series": "Der Sensor hat keine gültige 'hourly_forecast'-Reihe mit GHI/DNI/DHI."
     },
     "step": {
       "init": {
         "data": {
           "api_key": "API-Schlüssel",
-          "max_snowcover_depth_cm": "Kritische Schneehöhe (cm)"
+          "max_snowcover_depth_cm": "Kritische Schneehöhe (cm)",
+          "weather_source": "Wetterdatenquelle"
         },
-        "description": "Allgemeine Einstellungen für alle PV-Anlagen. Klicke auf „Weiter“, um Standort, Ausrichtung, Leistung und weitere Einstellungen jeder Anlage zu bearbeiten."
+        "description": "Allgemeine Einstellungen für alle PV-Anlagen. Klicke auf „Weiter“, um Standort, Ausrichtung, Leistung und weitere Einstellungen jeder Anlage zu bearbeiten.",
+        "data_description": {
+          "weather_source": "Open-Meteo: Wettermodell der Open-Meteo-API (Standard). Lokal: Strahlung und Temperatur aus Home-Assistant-Entitäten, z. B. SwissWeather Fusion; ohne Internetzugriff, Aktualisierung alle 10 Minuten."
+        }
       },
       "array": {
         "data": {
@@ -113,6 +155,29 @@
           "add_another": "Weitere Anlage hinzufügen"
         },
         "description": "Einstellungen für PV-Anlage {array_number}. Aktiviere „Weitere Anlage hinzufügen“, um eine weitere Anlage zu konfigurieren."
+      },
+      "local": {
+        "description": "Lokale Wetterquelle. Wähle die Wetter-Entität mit der stündlichen Temperaturprognose. Bei SwissWeather Fusion (ab v0.3.3) werden Strahlungs- und Schneehöhensensor automatisch gefunden, wenn die Felder leer bleiben.",
+        "data": {
+          "local_weather_entity": "Wetter-Entität",
+          "local_irradiance_entity": "Sensor mit Strahlungsreihe",
+          "local_snow_depth_entity": "Schneehöhensensor",
+          "local_fallback_open_meteo": "Auf Open-Meteo ausweichen"
+        },
+        "data_description": {
+          "local_weather_entity": "Muss stündliche Prognosen (Temperatur) unterstützen.",
+          "local_irradiance_entity": "Sensor, dessen Attribut 'hourly_forecast' stündliche GHI/DNI/DHI enthält (SwissWeather Fusion: Solar irradiance GHI (hour average)). Leer lassen für automatische Erkennung.",
+          "local_snow_depth_entity": "Optional. Schneehöhe am Boden; wird nur verwendet, wenn die maximale Schneebedeckung grösser als 0 ist. Leer lassen für automatische Erkennung.",
+          "local_fallback_open_meteo": "Wenn die lokalen Daten fehlen oder veraltet sind, stattdessen Open-Meteo abfragen. Wenn aus, bleibt die letzte gültige Prognose erhalten (fail-safe, kein Internetzugriff)."
+        }
+      }
+    }
+  },
+  "selector": {
+    "weather_source": {
+      "options": {
+        "open_meteo": "Open-Meteo-API",
+        "local": "Lokal (Home-Assistant-Entitäten)"
       }
     }
   }

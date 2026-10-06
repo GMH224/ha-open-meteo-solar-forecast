@@ -9,11 +9,13 @@
           "name": "Name",
           "model": "Weather model",
           "inverter_power": "Inverter capacity",
-          "max_snowcover_depth_cm": "Maximum snow cover depth"
+          "max_snowcover_depth_cm": "Maximum snow cover depth",
+          "weather_source": "Weather data source"
         },
         "data_description": {
           "inverter_power": "The AC capacity of a single inverter shared by all arrays in Watt (0 = no limit). Ignored if any array has its own inverter capacity set on the array pages.",
-          "max_snowcover_depth_cm": "If greater than 0, the snow cover depth which results in zero module power."
+          "max_snowcover_depth_cm": "If greater than 0, the snow cover depth which results in zero module power.",
+          "weather_source": "Open-Meteo: weather model from the Open-Meteo API (default). Local: radiation and temperature from Home Assistant entities, e.g. SwissWeather Fusion; no internet access, refreshed every 10 minutes."
         }
       },
       "array": {
@@ -46,7 +48,28 @@
           "partial_shading": "Only if horizon is enabled: treat shadows as partial.",
           "horizon_filepath": "Path to the horizon file (leave empty for the default path)."
         }
+      },
+      "local": {
+        "description": "Local weather source. Select the weather entity that provides the hourly temperature forecast. For SwissWeather Fusion (v0.3.3 or newer) the irradiance and snow-depth sensors are found automatically when left empty.",
+        "data": {
+          "local_weather_entity": "Weather entity",
+          "local_irradiance_entity": "Irradiance series sensor",
+          "local_snow_depth_entity": "Snow depth sensor",
+          "local_fallback_open_meteo": "Fall back to Open-Meteo"
+        },
+        "data_description": {
+          "local_weather_entity": "Must support hourly forecasts (temperature).",
+          "local_irradiance_entity": "Sensor whose 'hourly_forecast' attribute holds hourly GHI/DNI/DHI (SwissWeather Fusion: Solar irradiance GHI (hour average)). Leave empty to auto-detect.",
+          "local_snow_depth_entity": "Optional. Ground snow depth; only used if maximum snow cover depth is greater than 0. Leave empty to auto-detect.",
+          "local_fallback_open_meteo": "If the local data is missing or stale, fetch from Open-Meteo instead. When off, the last good forecast is kept (fail-safe, no internet access)."
+        }
       }
+    },
+    "error": {
+      "weather_not_found": "Weather entity not found.",
+      "weather_no_hourly": "This weather entity does not provide an hourly forecast.",
+      "irradiance_not_found": "Irradiance sensor not found (and none could be auto-detected for this weather entity).",
+      "irradiance_no_series": "The sensor has no valid 'hourly_forecast' series with GHI/DNI/DHI."
     }
   },
   "entity": {
@@ -107,12 +130,25 @@
       },
       "power_production_next_30minutes": {
         "name": "Estimated power production - next 30 minutes"
+      },
+      "forecast_source": {
+        "name": "Forecast source",
+        "state": {
+          "open_meteo": "Open-Meteo",
+          "local": "Local",
+          "open_meteo_fallback": "Open-Meteo (fallback)",
+          "retained": "Retained (last good forecast)"
+        }
       }
     }
   },
   "options": {
     "error": {
-      "invalid_api_key": "Invalid API key"
+      "invalid_api_key": "Invalid API key",
+      "weather_not_found": "Weather entity not found.",
+      "weather_no_hourly": "This weather entity does not provide an hourly forecast.",
+      "irradiance_not_found": "Irradiance sensor not found (and none could be auto-detected for this weather entity).",
+      "irradiance_no_series": "The sensor has no valid 'hourly_forecast' series with GHI/DNI/DHI."
     },
     "step": {
       "init": {
@@ -122,11 +158,13 @@
           "base_url": "API base URL",
           "model": "Weather model",
           "inverter_power": "Inverter capacity",
-          "max_snowcover_depth_cm": "Maximum snow cover depth"
+          "max_snowcover_depth_cm": "Maximum snow cover depth",
+          "weather_source": "Weather data source"
         },
         "data_description": {
           "inverter_power": "The AC capacity of a single inverter shared by all arrays in Watt (0 = no limit). Ignored if any array has its own inverter capacity set on the array pages.",
-          "max_snowcover_depth_cm": "If greater than 0, the snow cover depth which results in zero module power."
+          "max_snowcover_depth_cm": "If greater than 0, the snow cover depth which results in zero module power.",
+          "weather_source": "Open-Meteo: weather model from the Open-Meteo API (default). Local: radiation and temperature from Home Assistant entities, e.g. SwissWeather Fusion; no internet access, refreshed every 10 minutes."
         }
       },
       "array": {
@@ -159,6 +197,21 @@
           "partial_shading": "Only if horizon is enabled: treat shadows as partial.",
           "horizon_filepath": "Path to the horizon file (leave empty for the default path)."
         }
+      },
+      "local": {
+        "description": "Local weather source. Select the weather entity that provides the hourly temperature forecast. For SwissWeather Fusion (v0.3.3 or newer) the irradiance and snow-depth sensors are found automatically when left empty.",
+        "data": {
+          "local_weather_entity": "Weather entity",
+          "local_irradiance_entity": "Irradiance series sensor",
+          "local_snow_depth_entity": "Snow depth sensor",
+          "local_fallback_open_meteo": "Fall back to Open-Meteo"
+        },
+        "data_description": {
+          "local_weather_entity": "Must support hourly forecasts (temperature).",
+          "local_irradiance_entity": "Sensor whose 'hourly_forecast' attribute holds hourly GHI/DNI/DHI (SwissWeather Fusion: Solar irradiance GHI (hour average)). Leave empty to auto-detect.",
+          "local_snow_depth_entity": "Optional. Ground snow depth; only used if maximum snow cover depth is greater than 0. Leave empty to auto-detect.",
+          "local_fallback_open_meteo": "If the local data is missing or stale, fetch from Open-Meteo instead. When off, the last good forecast is kept (fail-safe, no internet access)."
+        }
       }
     }
   },
@@ -181,6 +234,12 @@
         "azimuth": "Azimuth (vertical-axis)",
         "tilt": "Tilt-axis",
         "dual": "Dual-axis"
+      }
+    },
+    "weather_source": {
+      "options": {
+        "open_meteo": "Open-Meteo API",
+        "local": "Local (Home Assistant entities)"
       }
     }
   }

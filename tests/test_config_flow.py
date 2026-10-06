@@ -10,7 +10,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import PropertyMock, patch
 
-from homeassistant.helpers.config_validation import custom_serializer, to_field_list
+from homeassistant.helpers.config_validation import custom_serializer
+
+try:  # Present in some Home Assistant releases only.
+    from homeassistant.helpers.config_validation import to_field_list
+except ImportError:  # 0.1.33.2 (defect P-01): HA 2026.2.x has no to_field_list.
+    import voluptuous_serialize
+
+    def to_field_list(schema, custom_serializer):
+        return voluptuous_serialize.convert(schema, custom_serializer=custom_serializer)
 
 from custom_components.open_meteo_solar_forecast.config_flow import (
     OpenMeteoSolarForecastFlowHandler,

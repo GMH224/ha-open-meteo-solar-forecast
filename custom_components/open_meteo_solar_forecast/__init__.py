@@ -28,6 +28,7 @@ from .coordinator import (
     checkHorizonFile,
     storage_key,
 )
+from .local_provider import HISTORY_STORAGE_VERSION, history_storage_key
 
 PLATFORMS = [Platform.SENSOR]
 
@@ -172,6 +173,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Remove the retained forecast storage for a removed config entry."""
     await Store(hass, STORAGE_VERSION, storage_key(entry.entry_id)).async_remove()
+    await Store(
+        hass, HISTORY_STORAGE_VERSION, history_storage_key(entry.entry_id)
+    ).async_remove()
 
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:

@@ -2,6 +2,17 @@
 
 This custom component integrates the [open-meteo-solar-forecast](https://github.com/rany2/open-meteo-solar-forecast) with Home Assistant. It allows you to see what your solar panels may produce in the future.
 
+> **GMH224 fork — v0.1.33.2.** Adds a **local weather source**: the forecast
+> can be computed from Home Assistant entities (SwissWeather Fusion ≥ 0.3.3)
+> instead of the Open-Meteo API, with no internet access. Open-Meteo mode is
+> unchanged and remains the default. 175 tests (+144 subtests) on a real Home
+> Assistant, physics validated against pvlib, 37/37 mutations caught.
+> ICS documents:
+> [architecture](OMSF_v0_1_33_2_Architecture_ICS.md) ·
+> [release audit](omsf_v0.1.33.2_release_audit.md) ·
+> [test report](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) ·
+> [developer notes](DEVELOPER.md) · [changelog](CHANGELOG.md)
+
 ## Installation
 
 ### HACS
@@ -16,13 +27,51 @@ This custom component integrates the [open-meteo-solar-forecast](https://github.
 
 ### Manual
 
-1. Download the [latest release](https://github.com/rany2/ha-open-meteo-solar-forecast/releases/latest).
+1. Download the [latest release](https://github.com/GMH224/ha-open-meteo-solar-forecast/releases/latest) (for this fork; upstream: rany2/ha-open-meteo-solar-forecast).
 2. Unpack the release and copy the `custom_components/open_meteo_solar_forecast` directory to the `custom_components` directory in your Home Assistant configuration directory.
 3. Restart Home Assistant.
 
 ## Configuration
 
 To use this integration in your installation, head to "Settings" in the Home Assistant UI, then "Integrations". Click on the plus button and search for "Open-Meteo Solar Forecast" and follow the instructions.
+
+### Weather data source (local or Open-Meteo)
+
+The first setup page has a **Weather data source** choice:
+
+- **Open-Meteo API** (default): unchanged behaviour, refreshed every 30 minutes.
+- **Local (Home Assistant entities)**: radiation and temperature come from
+  entities in your Home Assistant. Refreshed every 10 minutes; no internet
+  access.
+
+With *Local*, a second page asks for:
+
+| Field | Notes |
+|---|---|
+| Weather entity | e.g. `weather.swissweather_fusion_…`. Must provide an hourly forecast (temperature). |
+| Irradiance series sensor | Leave empty for SwissWeather Fusion: `…_solar_irradiance_ghi_hour_average` is found automatically. Any sensor with an `hourly_forecast` attribute in Fusion's format works (hourly `period_start`/`period_end` in UTC, `ghi`/`dni`/`dhi` hour averages, optional `*_instant`). |
+| Snow depth sensor | Optional, auto-detected for Fusion. Used only if *Maximum snow cover depth* is greater than 0. |
+| Fall back to Open-Meteo | Off by default: if local data is missing or stale, the last good forecast is kept. On: Open-Meteo is queried instead. |
+
+The radiation source is location-level; this integration computes the
+tilted irradiance for each of your arrays (tilt, azimuth, trackers),
+spreads hourly values to 15 minutes while conserving energy, and then runs
+the same PV model as in Open-Meteo mode.
+
+Things to know in local mode:
+
+- `sensor.<name>_forecast_source` shows what produced the current forecast:
+  `local`, `open_meteo`, `open_meteo_fallback` or `retained` (last good
+  forecast kept because the source is unusable — see its `last_error`
+  attribute).
+- Days the local data does not fully cover are **unknown** rather than 0.
+  With Fusion's ~5-day horizon, *5/6/7 days from now* are usually unknown.
+  On the first day after installation, *today* is unknown until the
+  integration has seen the whole day (Fusion does not publish past hours;
+  the integration keeps them itself from then on).
+- The radiation values are model output without bias correction.
+
+Details: [architecture document](OMSF_v0_1_33_2_Architecture_ICS.md).
 
 ### Multiple PV Arrays
 

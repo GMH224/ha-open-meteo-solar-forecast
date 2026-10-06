@@ -11,6 +11,8 @@ from homeassistant.const import CONF_API_KEY, CONF_LATITUDE, CONF_LONGITUDE, CON
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    EntitySelector,
+    EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -35,8 +37,16 @@ from .const import (
     CONF_MAX_SNOWCOVER_DEPTH_CM,
     CONF_MODULES_POWER,
     CONF_TRACKING,
+    CONF_LOCAL_FALLBACK_OPEN_METEO,
+    CONF_LOCAL_IRRADIANCE_ENTITY,
+    CONF_LOCAL_SNOW_DEPTH_ENTITY,
+    CONF_LOCAL_WEATHER_ENTITY,
+    CONF_WEATHER_SOURCE,
     DOMAIN,
+    SOURCE_LOCAL,
+    SOURCE_OPEN_METEO,
     TRACKING_OPTIONS,
+    WEATHER_SOURCES,
 )
 
 try:
@@ -229,6 +239,92 @@ def _scalar(value: Any) -> Any:
     return value
 
 
+LOCAL_KEYS = (
+    CONF_LOCAL_WEATHER_ENTITY,
+    CONF_LOCAL_IRRADIANCE_ENTITY,
+    CONF_LOCAL_SNOW_DEPTH_ENTITY,
+    CONF_LOCAL_FALLBACK_OPEN_METEO,
+)
+
+
+def _source_selector() -> SelectSelector:
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=list(WEATHER_SOURCES),
+            mode=SelectSelectorMode.DROPDOWN,
+            translation_key="weather_source",
+        )
+    )
+
+
+def _local_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Entity pickers for the local weather source (0.1.33.2)."""
+
+    def _optional(key: str) -> vol.Optional:
+        value = defaults.get(key)
+        if value:
+            return vol.Optional(key, description={"suggested_value": value})
+        return vol.Optional(key)
+
+    weather_default = defaults.get(CONF_LOCAL_WEATHER_ENTITY)
+    weather_key = (
+        vol.Required(CONF_LOCAL_WEATHER_ENTITY, default=weather_default)
+        if weather_default
+        else vol.Required(CONF_LOCAL_WEATHER_ENTITY)
+    )
+    return vol.Schema(
+        {
+            weather_key: EntitySelector(EntitySelectorConfig(domain="weather")),
+            _optional(CONF_LOCAL_IRRADIANCE_ENTITY): EntitySelector(
+                EntitySelectorConfig(domain="sensor")
+            ),
+            _optional(CONF_LOCAL_SNOW_DEPTH_ENTITY): EntitySelector(
+                EntitySelectorConfig(domain="sensor")
+            ),
+            vol.Required(
+                CONF_LOCAL_FALLBACK_OPEN_METEO,
+                default=bool(defaults.get(CONF_LOCAL_FALLBACK_OPEN_METEO, False)),
+            ): BooleanSelector(),
+        }
+    )
+
+
+def _resolve_local_input(
+    hass: Any, user_input: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Fill auto-discoverable entities and validate the local source.
+
+    Empty irradiance / snow-depth fields are filled from the SwissWeather
+    Fusion companions of the selected weather entity. The resolved entity
+    ids are stored explicitly, so the running configuration never depends
+    on discovery.
+    """
+    from .local_provider import (
+        async_find_fusion_companions,
+        validate_irradiance_entity,
+        validate_weather_entity,
+    )
+
+    resolved = {key: user_input.get(key) for key in LOCAL_KEYS}
+    resolved[CONF_LOCAL_FALLBACK_OPEN_METEO] = bool(
+        resolved[CONF_LOCAL_FALLBACK_OPEN_METEO]
+    )
+    errors: dict[str, str] = {}
+    weather = resolved[CONF_LOCAL_WEATHER_ENTITY]
+    if error := validate_weather_entity(hass, weather):
+        errors[CONF_LOCAL_WEATHER_ENTITY] = error
+        return resolved, errors
+
+    companions = async_find_fusion_companions(hass, weather)
+    if not resolved[CONF_LOCAL_IRRADIANCE_ENTITY]:
+        resolved[CONF_LOCAL_IRRADIANCE_ENTITY] = companions["irradiance"]
+    if not resolved[CONF_LOCAL_SNOW_DEPTH_ENTITY]:
+        resolved[CONF_LOCAL_SNOW_DEPTH_ENTITY] = companions["snow_depth"]
+    if error := validate_irradiance_entity(hass, resolved[CONF_LOCAL_IRRADIANCE_ENTITY]):
+        errors[CONF_LOCAL_IRRADIANCE_ENTITY] = error
+    return resolved, errors
+
+
 class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Open-Meteo Solar Forecast."""
 
@@ -237,6 +333,7 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the flow."""
         self._common: dict[str, Any] = {}
+        self._local: dict[str, Any] = {}
         self._arrays: list[dict[str, Any]] = []
 
     @staticmethod
@@ -254,6 +351,8 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._common = user_input
             self._arrays = []
+            if user_input.get(CONF_WEATHER_SOURCE) == SOURCE_LOCAL:
+                return await self.async_step_local()
             return await self.async_step_array()
 
         return self.async_show_form(
@@ -269,6 +368,9 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
                         CONF_BASE_URL, default="https://api.open-meteo.com"
                     ): str,
                     vol.Optional(CONF_MODEL, default="best_match"): str,
+                    vol.Required(
+                        CONF_WEATHER_SOURCE, default=SOURCE_OPEN_METEO
+                    ): _source_selector(),
                     vol.Required(CONF_INVERTER_POWER, default=0): vol.All(
                         NumberSelector(
                             NumberSelectorConfig(
@@ -292,6 +394,22 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
             ),
         )
 
+    async def async_step_local(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select the local weather entities (0.1.33.2)."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            self._local, errors = _resolve_local_input(self.hass, user_input)
+            if not errors:
+                return await self.async_step_array()
+        return self.async_show_form(
+            step_id="local",
+            last_step=False,
+            data_schema=_local_schema(self._local or user_input or {}),
+            errors=errors,
+        )
+
     async def async_step_array(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -303,6 +421,7 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
                 return await self.async_step_array()
 
             per_array = _collapse_arrays(self._arrays)
+            source = self._common.get(CONF_WEATHER_SOURCE, SOURCE_OPEN_METEO)
             return self.async_create_entry(
                 title=self._common[CONF_NAME],
                 data={
@@ -313,10 +432,12 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
                     CONF_API_KEY: self._common[CONF_API_KEY],
                     CONF_BASE_URL: self._common[CONF_BASE_URL],
                     CONF_MODEL: self._common[CONF_MODEL],
+                    CONF_WEATHER_SOURCE: source,
                     CONF_INVERTER_POWER: self._common[CONF_INVERTER_POWER],
                     CONF_MAX_SNOWCOVER_DEPTH_CM: self._common[
                         CONF_MAX_SNOWCOVER_DEPTH_CM
                     ],
+                    **(self._local if source == SOURCE_LOCAL else {}),
                     **{key: per_array[key] for key in PER_ARRAY_KEYS},
                 },
             )
@@ -339,6 +460,7 @@ class OpenMeteoSolarForecastOptionFlowHandler(OptionsFlow):
     def __init__(self) -> None:
         """Initialize the options flow."""
         self._common: dict[str, Any] = {}
+        self._local: dict[str, Any] = {}
         self._arrays: list[dict[str, Any]] = []
         self._stored_arrays: list[dict[str, Any]] = []
 
@@ -350,6 +472,8 @@ class OpenMeteoSolarForecastOptionFlowHandler(OptionsFlow):
             self._common = user_input
             self._arrays = []
             self._stored_arrays = _expand_arrays(self.config_entry)
+            if user_input.get(CONF_WEATHER_SOURCE) == SOURCE_LOCAL:
+                return await self.async_step_local()
             return await self.async_step_array()
 
         options = self.config_entry.options
@@ -370,6 +494,10 @@ class OpenMeteoSolarForecastOptionFlowHandler(OptionsFlow):
                     vol.Optional(
                         CONF_MODEL, default=options.get(CONF_MODEL, "best_match")
                     ): str,
+                    vol.Required(
+                        CONF_WEATHER_SOURCE,
+                        default=options.get(CONF_WEATHER_SOURCE, SOURCE_OPEN_METEO),
+                    ): _source_selector(),
                     vol.Required(
                         CONF_INVERTER_POWER,
                         default=options.get(CONF_INVERTER_POWER, 0),
@@ -401,6 +529,23 @@ class OpenMeteoSolarForecastOptionFlowHandler(OptionsFlow):
             ),
         )
 
+    async def async_step_local(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select the local weather entities (0.1.33.2)."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            self._local, errors = _resolve_local_input(self.hass, user_input)
+            if not errors:
+                return await self.async_step_array()
+        stored = {key: self.config_entry.options.get(key) for key in LOCAL_KEYS}
+        return self.async_show_form(
+            step_id="local",
+            last_step=False,
+            data_schema=_local_schema(self._local or user_input or stored),
+            errors=errors,
+        )
+
     async def async_step_array(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -412,16 +557,19 @@ class OpenMeteoSolarForecastOptionFlowHandler(OptionsFlow):
                 return await self.async_step_array()
 
             per_array = _collapse_arrays(self._arrays)
+            source = self._common.get(CONF_WEATHER_SOURCE, SOURCE_OPEN_METEO)
             return self.async_create_entry(
                 title="",
                 data={
                     CONF_API_KEY: self._common.get(CONF_API_KEY),
                     CONF_BASE_URL: self._common[CONF_BASE_URL],
                     CONF_MODEL: self._common[CONF_MODEL],
+                    CONF_WEATHER_SOURCE: source,
                     CONF_INVERTER_POWER: self._common[CONF_INVERTER_POWER],
                     CONF_MAX_SNOWCOVER_DEPTH_CM: self._common[
                         CONF_MAX_SNOWCOVER_DEPTH_CM
                     ],
+                    **(self._local if source == SOURCE_LOCAL else {}),
                     **{key: per_array[key] for key in PER_ARRAY_KEYS},
                 },
             )

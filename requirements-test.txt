@@ -1,0 +1,10 @@
+# Test dependencies for 0.1.33.2. Verified with Python 3.13.
+# pytest-homeassistant-custom-component pins a matching homeassistant release
+# (0.13.316 -> homeassistant 2026.2.3 at the time of the verification record).
+pytest-homeassistant-custom-component
+open_meteo_solar_forecast==0.1.32
+pyflakes>=3.2.0
+# Independent reference implementation (NREL SPA solar position, Hay-Davies
+# transposition, Ineichen clear sky). Test-only; the integration does not
+# depend on it. Tests that need it are skipped when it is absent.
+pvlib>=0.11
