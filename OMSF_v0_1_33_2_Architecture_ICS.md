@@ -3,11 +3,95 @@
 **Feature:** local weather source — PV forecast from Home Assistant entities
 (SwissWeather Fusion ≥ 0.3.3) instead of the Open-Meteo API; from 0.1.33.3
 also a hybrid of both.
-**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3, 0.1.33.4)
+**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3, 0.1.33.4), 11 October 2026 (0.1.33.5)
 **Companion documents:**
 [`omsf_v0.1.33.2_release_audit.md`](omsf_v0.1.33.2_release_audit.md) (what changed, defects, safety analysis),
 [`omsf_v0_1_33_2_ICS_quality_bug_testing_report.md`](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) (tests, mutation record, gaps),
 [`DEVELOPER.md`](DEVELOPER.md) (module map, how to run tests).
+
+---
+
+## 0c. Update for 0.1.33.5 — partial shading
+
+Companion documents: [`omsf_v0.1.33.5_release_audit.md`](omsf_v0.1.33.5_release_audit.md),
+[`omsf_v0_1_33_5_ICS_quality_bug_testing_report.md`](omsf_v0_1_33_5_ICS_quality_bug_testing_report.md);
+user reference: README, section *Shading*.
+
+**Why.** Nine months of the owner's production (Feb–Oct 2026, hourly, per
+string) showed the configured orientations to be right but the South array
+losing 30–65 % of its output on clear mornings until ≈10:30, from the tall
+north–south wing east of it and the chimney. The library can only express
+shade as a horizon line (all-or-nothing for the whole array); the measured
+loss is partial and depends on string wiring. A 3-D model of the house
+(fitted to the data, see the release audit §2) reproduced the losses at the
+noise level of hourly data. The owner asked for a general mechanism:
+geometry or table, per array, flexible.
+
+**Where it sits.** Between the response and the library's power
+calculation — the same seam the local source already uses:
+
+```
+Open-Meteo API ──► OpenMeteoSolarForecast._request ─┐
+                                                    ├─► ShadingMixin._apply_shading ─► library power model
+Local engine  ──► LocalOpenMeteoSolarForecast._request ┘        (per array, in call order)
+```
+
+The library requests one response per array, sequentially, inside
+`estimate()`; the mixin resets a counter at the start of `estimate()` and
+maps each response to its array. Without any valid table the coordinator
+keeps the unmodified `OpenMeteoSolarForecast` class (R26).
+
+**Algorithm (§5.10).**
+1. *Table*: factor k(month, sun azimuth, sun elevation) ∈ [0, 1] on a regular
+   grid, bilinear; a full circle wraps; outside a partial table k = 1, below
+   its lowest elevation the lowest row.
+2. *Geometry → table*: 2° grid of sun directions in front of the panel plane;
+   sample points per module: bypass sections × 2 halves × 4 points (reduced
+   if a work budget of 6·10⁸ would be exceeded, else refused); ray tests
+   against convex solids (box, gable building; half-space clipping), planar
+   polygons (even-odd), cylinders/cones (quadratic with height limits);
+   transparency multiplies (per month if it varies). Electrical model
+   *bypass*: section capability = diffuse + beam × light of its darkest cell
+   (half-cut: mean of the halves' darkest cells); per string the operating
+   current maximising current × sections able to carry it; k derived at a
+   reference of 800 W/m² × cos(AOI) direct and 120 W/m² diffuse. *Area*:
+   k = mean light.
+3. *Application*: for each 15-minute value, DNI = horizontal direct ÷ cos Z
+   (averages: mean over three sub-moments in the quarter; capped at
+   1361 W/m²; sun < 1° → untouched), blocked = DNI × cos(AOI) × (1 − k),
+   GTI′ = max(GTI − blocked, 0). Diffuse and direct columns are not changed
+   (they describe the sky; the library's horizon logic reads them). k ≥ 1 −
+   10⁻⁹ is treated as exactly 1 and leaves the value object untouched.
+
+**New requirements.**
+
+| ID | Requirement | Verified by |
+|---|---|---|
+| R26 | No shading file → unmodified library class, identical values | `test_open_meteo_mode_without_shading_keeps_the_library_class`, `test_factor_one_leaves_the_payload_unchanged`; M82, M108 |
+| R27 | Only direct light is reduced, by exactly the blocked share | `test_factor_zero_removes_exactly_the_direct_light_on_the_plane`, `test_half_factor_*`, `test_diffuse_and_direct_columns_are_never_changed`; M74, M75, M78 |
+| R28 | Geometry shadows are geometrically correct | analytic tests per obstacle type; M101, M102, M104 |
+| R29 | Electrical model per bypass-diode section and string | hand-worked tests; M88–M90, M107 |
+| R30 | Shading files are bounded and strictly validated (safe YAML, unknown keys, ranges, planarity, overlap, work budget) | `test_invalid_*`, `test_yaml_with_python_tags_is_refused`, `test_work_budget_*`; M95–M100 |
+| R31 | A faulty file never stops the forecast; it is visible (repair issue, attribute, diagnostics) and refused in the dialogs | `test_invalid_file_never_stops_the_forecast`, `test_missing_file_*`, flow tests; M84, M86, M103 |
+| R32 | Same shading in Open-Meteo, local and hybrid mode | `test_open_meteo_mode_shading_*`, `test_local_mode_applies_the_same_shading`, `test_hybrid_mode_shades_both_parts`; M81, M83 |
+| R33 | The owner's South geometry reproduces the data-fitted model | `test_south_geometry_reproduces_the_fitted_analysis_model` |
+
+**New failure modes.**
+
+| ID | Condition | Behaviour |
+|---|---|---|
+| F17 | Shading file missing, unreadable, invalid, too large, too complex, or array tracking | array unshaded; repair issue `invalid_shading_file`; `forecast_source.shading[i].state = error`; logged once per load |
+| F18 | Geometry orientation differs from the entry by > 3° | used as described; warning in diagnostics |
+| F19 | File changed on disk | read again on the next reload (cache keyed by size and mtime) |
+
+**New limitations.** L-S1 the bypass conversion uses a fixed direct/diffuse
+reference (small error when direct light is small); L-S2 shade on diffuse
+light (hidden sky) and on circumsolar light is not modelled, nor are
+reflections; L-S3 each string is assumed to have its own MPP tracker;
+L-S4 tracking arrays are not supported; L-S5 shadow edges are resolved to
+the 2° grid and three sub-moments per quarter hour (≈ ±5 min); L-S6 the
+South geometry is fitted to hourly data Feb–Oct, Nov–Jan is extrapolated by
+the model.
 
 ---
 

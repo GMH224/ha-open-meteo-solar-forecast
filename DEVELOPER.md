@@ -14,6 +14,8 @@ Applies from v0.1.33.2. Architecture and rationale:
 | `local_source.py` | **pure engine**: validation, solar geometry, downscaling, transposition, payload synthesis, coverage | **no** (enforced by test) |
 | `hybrid.py` | **pure**: day-level join of local and Open-Meteo estimates (0.1.33.3) | **no** (enforced by test) |
 | `errors.py` | **pure**: sanitising error text before it reaches attributes/diagnostics (0.1.33.4) | **no** |
+| `shading.py` | **pure**: shading table format, YAML geometry (validation, ray tracing, bypass-diode model), vectorised sun position, application to a response (0.1.33.5) | **no** (enforced by test) |
+| `shading_provider.py` | HA glue for shading: bounded file read + cache, repair issues, `ShadingMixin`, `ShadedOpenMeteoSolarForecast` (0.1.33.5) | yes |
 | `sensor.py` | forecast sensors + `forecast_source` diagnostic sensor; day masking | yes |
 | `diagnostics.py` | export incl. `source` block | yes |
 | `energy.py`, `recorder.py` | unchanged | yes |
@@ -43,6 +45,11 @@ suite before changing the pin.**
    rule; review each new input against this list.
 7. Error text reaching an attribute or the diagnostics goes through
    `errors.sanitize_error`.
+8. Shading (0.1.33.5) only ever reduces the **direct** part of the
+   plane-of-array irradiance, and a table factor of 1 must leave a value
+   bit-identical (`test_factor_one_leaves_the_payload_unchanged`, M108).
+   Without any valid shading table the coordinator must keep the
+   unmodified library class (M82).
 
 ## Running the tests
 
@@ -69,6 +76,10 @@ Test files:
 | `tests/test_hybrid.py` | hybrid join rule, pure (0.1.33.3) |
 | `tests/test_hybrid_integration.py` | real HA: hybrid cases, Open-Meteo cache/failure, provenance, parity, release process (0.1.33.3) |
 | `tests/test_v0_1_33_4_audit_remediation.py` | regression tests for every remediated external-audit finding (0.1.33.4) |
+| `tests/test_shading_geometry.py` | geometry: every obstacle type against hand-calculable shadow edges, electrical model hand-worked, validation messages, work budget (0.1.33.5) |
+| `tests/test_shading_table_apply.py` | table format, interpolation, vectorised sun vs engine and pvlib, application against pvlib beam (0.1.33.5) |
+| `tests/test_shading_integration.py` | real HA: Open-Meteo/local/hybrid with shading, parity without, repair issues, flows, cache, diagnostics, upgrade (0.1.33.5) |
+| `tests/test_shading_examples.py` | shipped examples, South geometry vs fitted analysis, CLI tool, translations, purity (0.1.33.5) |
 | `tests/test_config_flow.py` | pre-existing wizard tests (with HA-version shim) |
 | `tests/fusion_fixtures.py` | builders for the exact Fusion v0.3.3 attribute shape |
 | `tests/mutation/run_mutations.py` | mutation record |

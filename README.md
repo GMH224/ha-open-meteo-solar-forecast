@@ -150,6 +150,111 @@ Partial shading controls shadow estimation:
 
 For more information, see the [open-meteo-solar-forecast repository](https://github.com/rany2/open-meteo-solar-forecast).
 
+### Shading (partial shading by nearby objects, 0.1.33.5)
+
+The horizon file treats shade as all-or-nothing for the whole array. Close
+objects - another wing of the house, a chimney, a dormer, a tree - usually
+shade only *part* of a module field, and because modules are wired in
+strings with bypass diodes, a partly shaded field loses more than the shaded
+area. For this, every array has an optional **Shading file** field. Two
+kinds of file are accepted; the file name decides which:
+
+| File | What it contains | When to use |
+|---|---|---|
+| `*.yaml` / `*.yml` - **geometry** | the module field (orientation, position, rows x columns, module size, bypass diodes, cell type, strings) and the objects around it | you can describe the surroundings with a few boxes, buildings, walls and trees |
+| anything else (`.txt`, `.csv`) - **shading table** | for each sun position the share of direct light that still produces power: `azimuth  elevation  factor` (optionally `month` first) | you have measured data or another tool, or you want to edit the result of a geometry |
+
+What the integration does with it, identically for Open-Meteo, local and
+hybrid data: every 15 minutes the **direct** sunlight on the panel plane is
+derived from the forecast's direct radiation and the sun position, and only
+the blocked share of it is removed. Diffuse light is never reduced. Arrays
+without a file behave exactly as before. A geometry file is ray-traced once
+when the entry is loaded (typically well under a second) and cached; a
+changed file is read again on the next reload.
+
+A faulty file never stops the forecast: that array runs without shading,
+Home Assistant shows a **repair issue** with the reason, the
+`forecast_source` sensor shows `shading: [{state: error, ...}]`, and the
+setup/options dialog refuses the file with the same message.
+
+#### Geometry file (version 1)
+
+Frame: metres, **x = east, y = north, z = up**, any origin (a house corner
+at eave height is convenient). Angles: compass degrees (0 = north,
+90 = east, 180 = south). One file describes **one** module field.
+
+```yaml
+version: 1
+electrical_model: bypass      # bypass (default) | area (optimisers / micro-inverters)
+array:
+  azimuth: 197                # direction the panels face
+  tilt: 45
+  origin: [-5.8, 2.0, 0.25]   # lower-left corner of the module field, seen from the front
+  rows: 5                     # row 1 = bottom
+  columns: 3                  # column 1 = left
+  module_width: 1.72          # along a row (width > height = landscape)
+  module_height: 1.13         # up the slope
+  gap: 0.02                   # optional
+  bypass_diodes: 3            # optional
+  cell_type: full             # full | half_cut
+  strings:                    # optional; default: all modules in one string
+    - [r1c1, r1c2, r1c3, r2c1, r2c2, r2c3, r3c1, r3c2, r3c3, r4c1, r4c2, r4c3, r5c1, r5c2, r5c3]
+obstacles:
+  - type: gable_building      # another wing, a neighbour
+    center: [5.5, 0.2]
+    ridge_azimuth: 358
+    length: 18
+    width: 11
+    eave_height: 0
+    ridge_height: 5.5
+  - type: box                 # chimney, dormer
+    center: [2.1, 3.5]
+    width: 0.7
+    depth: 0.7
+    azimuth: 107              # direction of the width axis
+    bottom: 0
+    top: 5.9
+```
+
+Obstacle types: `box`, `gable_building`, `polygon` (any flat shape given by
+its corners, e.g. a wall or fence; corners must lie in one plane),
+`cylinder` and `cone` (trees, masts; `radius_top` makes a truncated cone).
+Every obstacle accepts an optional `name` and `transparency` - a number
+0...1 or a list of 12 monthly values for deciduous trees (see
+[`examples/shading/example_all_types.yaml`](examples/shading/example_all_types.yaml)).
+Unknown keys, values out of range and obstacles that overlap the module
+field are refused with a message naming the exact field.
+
+Electrical models: **bypass** - each bypass-diode section is limited by its
+darkest cell (half-cut modules: by the mean of their two halves), shaded
+sections are bypassed and each string runs at its best operating point;
+**area** - loss proportional to the shaded area (module-level optimisers).
+
+#### Shading table
+
+```text
+# azimuth  elevation  factor        (tab, comma, semicolon or space separated)
+0          0          1.0
+...
+96         25         0.0
+108        33         0.79
+```
+
+A complete regular grid is required (every azimuth with every elevation).
+With a fourth leading column `month` (1-12), all 12 months must be present.
+Between grid points the factor is interpolated; outside the azimuth range of
+a partial table and above its highest elevation the factor is 1 (unshaded),
+below its lowest elevation the lowest row applies. A table covering 0...350
+in equal steps wraps around north.
+
+`tools/shading_table.py my_roof.yaml > my_roof_table.txt` writes the table a
+geometry produces (no Home Assistant needed; `--check` only validates).
+
+Limits: file 256 KiB, 70 000 table rows, 64 obstacles, 64 polygon corners,
+120 modules, 16 strings, coordinates within ±1000 m. Not supported for
+tracking arrays. Shadows on diffuse light (the part of the sky an object
+hides) and reflections are not modelled.
+
 ## Credits
 
 The [forecast_solar component code](https://github.com/home-assistant/core/tree/dev/homeassistant/components/forecast_solar) was used as a base for this integration. Thanks for such a clean starting point!

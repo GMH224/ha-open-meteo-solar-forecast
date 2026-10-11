@@ -1,5 +1,32 @@
 # Changelog — GMH224 fork
 
+## 0.1.33.5 — 2026-10-11 — partial shading (geometry and table)
+
+### Added
+- **Shading file per array** (optional, setup and options dialog): either a
+  **geometry file** (`.yaml`: module field incl. bypass diodes, cell type and
+  strings, plus boxes, gable-roof buildings, planar polygons, cylinders and
+  cones with optional monthly transparency) that is ray-traced into a table,
+  or a **shading table** (`azimuth elevation factor`, optionally per month).
+- Applied every 15 minutes to the **direct** light on the panel plane only,
+  identically for Open-Meteo, local and hybrid data. Electrical models:
+  bypass-diode/string (default) or area.
+- Faulty file: the array runs unshaded, a repair issue explains why, the
+  dialog refuses the file with the same message; `forecast_source` attribute
+  `shading`; diagnostics block `shading` (incl. removed share per refresh).
+- `examples/shading/`: reference example with every obstacle type, the
+  fitted geometry of the owner's South array and its table.
+  `tools/shading_table.py`: geometry → table / file check without HA.
+- Tests: 126 new (geometry against hand-calculable shadow edges, electrical
+  model hand-worked, table format, application against pvlib, HA
+  integration in all three modes, flows, issues, upgrade path, examples);
+  mutations M74–M108.
+
+### Unchanged
+- Arrays without a shading file: the unmodified library class is used
+  (Open-Meteo parity); the horizon file and its partial-shading switch work
+  as before.
+
 ## 0.1.33.4 — 2026-10-06 — external audit remediation
 
 Remediates the external ICS/OT audit of 0.1.33.3 (20 findings; triage in
