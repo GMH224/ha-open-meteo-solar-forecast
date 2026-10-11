@@ -56,6 +56,8 @@ async def async_get_config_entry_diagnostics(
             "timezone": coordinator.data.timezone,
         },
         "source": _source_diagnostics(coordinator),
+        # 0.1.33.5: partial shading per array
+        "shading": getattr(coordinator, "shading_report", []),
     }
 
 

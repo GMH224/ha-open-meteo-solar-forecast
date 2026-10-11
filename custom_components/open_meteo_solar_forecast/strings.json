@@ -34,7 +34,8 @@
           "use_horizon": "Use horizon file",
           "partial_shading": "Partial shading",
           "horizon_filepath": "Horizon file path",
-          "add_another": "Add another array"
+          "add_another": "Add another array",
+          "shading_filepath": "Shading file (optional)"
         },
         "data_description": {
           "declination": "0 = horizontal, 90 = vertical.",
@@ -46,7 +47,8 @@
           "damping_evening": "0.0 = no damping, 1.0 = full damping in the evening.",
           "use_horizon": "Use the horizon line defined in the horizon file (see docs) to respect shading of the modules.",
           "partial_shading": "Only if horizon is enabled: treat shadows as partial.",
-          "horizon_filepath": "Path to the horizon file (leave empty for the default path)."
+          "horizon_filepath": "Path to the horizon file (leave empty for the default path).",
+          "shading_filepath": "Partial shading by nearby objects: a shading table (.txt/.csv: azimuth, elevation, factor) or a geometry file (.yaml) describing the modules and the surrounding buildings, chimneys or trees. Leave empty for none. Only direct light is reduced. See the README, section 'Shading'."
         }
       },
       "local": {
@@ -69,7 +71,9 @@
       "weather_not_found": "Weather entity not found.",
       "weather_no_hourly": "This weather entity does not provide an hourly forecast.",
       "irradiance_not_found": "Irradiance sensor not found (and none could be auto-detected for this weather entity).",
-      "irradiance_no_series": "The sensor has no valid 'hourly_forecast' series with GHI/DNI/DHI."
+      "irradiance_no_series": "The sensor has no valid 'hourly_forecast' series with GHI/DNI/DHI.",
+      "invalid_shading_file": "Shading file invalid: {shading_error}",
+      "shading_requires_fixed_array": "A shading file can only be used for a fixed (non-tracking) array."
     }
   },
   "options": {
@@ -78,7 +82,9 @@
       "weather_not_found": "Weather entity not found.",
       "weather_no_hourly": "This weather entity does not provide an hourly forecast.",
       "irradiance_not_found": "Irradiance sensor not found (and none could be auto-detected for this weather entity).",
-      "irradiance_no_series": "The sensor has no valid 'hourly_forecast' series with GHI/DNI/DHI."
+      "irradiance_no_series": "The sensor has no valid 'hourly_forecast' series with GHI/DNI/DHI.",
+      "invalid_shading_file": "Shading file invalid: {shading_error}",
+      "shading_requires_fixed_array": "A shading file can only be used for a fixed (non-tracking) array."
     },
     "step": {
       "init": {
@@ -113,7 +119,8 @@
           "use_horizon": "[%key:component::open_meteo_solar_forecast::config::step::array::data::use_horizon%]",
           "partial_shading": "[%key:component::open_meteo_solar_forecast::config::step::array::data::partial_shading%]",
           "horizon_filepath": "[%key:component::open_meteo_solar_forecast::config::step::array::data::horizon_filepath%]",
-          "add_another": "[%key:component::open_meteo_solar_forecast::config::step::array::data::add_another%]"
+          "add_another": "[%key:component::open_meteo_solar_forecast::config::step::array::data::add_another%]",
+          "shading_filepath": "Shading file (optional)"
         },
         "data_description": {
           "declination": "[%key:component::open_meteo_solar_forecast::config::step::array::data_description::declination%]",
@@ -125,7 +132,8 @@
           "damping_evening": "[%key:component::open_meteo_solar_forecast::config::step::array::data_description::damping_evening%]",
           "use_horizon": "[%key:component::open_meteo_solar_forecast::config::step::array::data_description::use_horizon%]",
           "partial_shading": "[%key:component::open_meteo_solar_forecast::config::step::array::data_description::partial_shading%]",
-          "horizon_filepath": "[%key:component::open_meteo_solar_forecast::config::step::array::data_description::horizon_filepath%]"
+          "horizon_filepath": "[%key:component::open_meteo_solar_forecast::config::step::array::data_description::horizon_filepath%]",
+          "shading_filepath": "Partial shading by nearby objects: a shading table (.txt/.csv: azimuth, elevation, factor) or a geometry file (.yaml) describing the modules and the surrounding buildings, chimneys or trees. Leave empty for none. Only direct light is reduced. See the README, section 'Shading'."
         }
       },
       "local": {
@@ -248,6 +256,12 @@
           "description": "Optional location to set the array to, if omitted the array will be set to the HA home location."
         }
       }
+    }
+  },
+  "issues": {
+    "invalid_shading_file": {
+      "title": "Shading file for array {array} ignored",
+      "description": "The shading file `{path}` could not be used: {error}\n\nThe forecast continues for this array without shading. Correct the file (or clear the field in the array settings) and reload the integration."
     }
   }
 }

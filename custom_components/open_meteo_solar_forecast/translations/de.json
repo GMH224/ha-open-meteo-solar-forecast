@@ -24,9 +24,13 @@
           "use_horizon": "Wenn aktiviert, wird die in der Horizontdatei spezifizierte Horizontlinie für die Beschattung der Module berücksichtigt.",
           "horizon_filepath": "Pfad zur Horizont-Datei",
           "partial_shading": "(Nur zusammen mit Horizontlinie:) Wenn aktiviert, werden Schatten als partiell behandelt.",
-          "add_another": "Weitere Anlage hinzufügen"
+          "add_another": "Weitere Anlage hinzufügen",
+          "shading_filepath": "Verschattungsdatei (optional)"
         },
-        "description": "Einstellungen für PV-Anlage {array_number}. Aktiviere „Weitere Anlage hinzufügen“, um eine weitere Anlage zu konfigurieren."
+        "description": "Einstellungen für PV-Anlage {array_number}. Aktiviere „Weitere Anlage hinzufügen“, um eine weitere Anlage zu konfigurieren.",
+        "data_description": {
+          "shading_filepath": "Teilverschattung durch Objekte in der Nähe: eine Verschattungstabelle (.txt/.csv: Azimut, Höhe, Faktor) oder eine Geometriedatei (.yaml), die die Module und die umgebenden Gebäude, Kamine oder Bäume beschreibt. Leer lassen für keine. Reduziert wird nur das direkte Licht. Siehe README, Abschnitt «Shading»."
+        }
       },
       "local": {
         "description": "Lokale Wetterquelle. Wähle die Wetter-Entität mit der stündlichen Temperaturprognose. Bei SwissWeather Fusion (ab v0.3.3) werden Strahlungs- und Schneehöhensensor automatisch gefunden, wenn die Felder leer bleiben.",
@@ -48,7 +52,9 @@
       "weather_not_found": "Wetter-Entität nicht gefunden.",
       "weather_no_hourly": "Diese Wetter-Entität liefert keine stündliche Prognose.",
       "irradiance_not_found": "Strahlungssensor nicht gefunden (und für diese Wetter-Entität nicht automatisch erkennbar).",
-      "irradiance_no_series": "Der Sensor hat keine gültige 'hourly_forecast'-Reihe mit GHI/DNI/DHI."
+      "irradiance_no_series": "Der Sensor hat keine gültige 'hourly_forecast'-Reihe mit GHI/DNI/DHI.",
+      "invalid_shading_file": "Verschattungsdatei ungültig: {shading_error}",
+      "shading_requires_fixed_array": "Eine Verschattungsdatei ist nur für fest montierte (nicht nachgeführte) Felder möglich."
     }
   },
   "entity": {
@@ -129,7 +135,9 @@
       "weather_not_found": "Wetter-Entität nicht gefunden.",
       "weather_no_hourly": "Diese Wetter-Entität liefert keine stündliche Prognose.",
       "irradiance_not_found": "Strahlungssensor nicht gefunden (und für diese Wetter-Entität nicht automatisch erkennbar).",
-      "irradiance_no_series": "Der Sensor hat keine gültige 'hourly_forecast'-Reihe mit GHI/DNI/DHI."
+      "irradiance_no_series": "Der Sensor hat keine gültige 'hourly_forecast'-Reihe mit GHI/DNI/DHI.",
+      "invalid_shading_file": "Verschattungsdatei ungültig: {shading_error}",
+      "shading_requires_fixed_array": "Eine Verschattungsdatei ist nur für fest montierte (nicht nachgeführte) Felder möglich."
     },
     "step": {
       "init": {
@@ -154,9 +162,13 @@
           "use_horizon": "Berücksichtige Horizontline aus Horizont-Datei",
           "horizon_filepath": "Pfad zur Horizont-Datei",
           "partial_shading": "Behandle Schatten als partiell",
-          "add_another": "Weitere Anlage hinzufügen"
+          "add_another": "Weitere Anlage hinzufügen",
+          "shading_filepath": "Verschattungsdatei (optional)"
         },
-        "description": "Einstellungen für PV-Anlage {array_number}. Aktiviere „Weitere Anlage hinzufügen“, um eine weitere Anlage zu konfigurieren."
+        "description": "Einstellungen für PV-Anlage {array_number}. Aktiviere „Weitere Anlage hinzufügen“, um eine weitere Anlage zu konfigurieren.",
+        "data_description": {
+          "shading_filepath": "Teilverschattung durch Objekte in der Nähe: eine Verschattungstabelle (.txt/.csv: Azimut, Höhe, Faktor) oder eine Geometriedatei (.yaml), die die Module und die umgebenden Gebäude, Kamine oder Bäume beschreibt. Leer lassen für keine. Reduziert wird nur das direkte Licht. Siehe README, Abschnitt «Shading»."
+        }
       },
       "local": {
         "description": "Lokale Wetterquelle. Wähle die Wetter-Entität mit der stündlichen Temperaturprognose. Bei SwissWeather Fusion (ab v0.3.3) werden Strahlungs- und Schneehöhensensor automatisch gefunden, wenn die Felder leer bleiben.",
@@ -182,6 +194,12 @@
         "local": "Lokal (Home-Assistant-Entitäten)",
         "hybrid": "Hybrid (lokal, danach Open-Meteo)"
       }
+    }
+  },
+  "issues": {
+    "invalid_shading_file": {
+      "title": "Verschattungsdatei für Feld {array} ignoriert",
+      "description": "Die Verschattungsdatei `{path}` konnte nicht verwendet werden: {error}\n\nDie Prognose läuft für dieses Feld ohne Verschattung weiter. Korrigieren Sie die Datei (oder leeren Sie das Feld in den Feldeinstellungen) und laden Sie die Integration neu."
     }
   }
 }

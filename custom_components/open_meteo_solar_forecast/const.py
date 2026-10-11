@@ -22,6 +22,8 @@ TRACKING_OPTIONS = ("none", "azimuth", "tilt", "dual")
 CONF_USE_HORIZON = "use_horizon"
 CONF_PARTIAL_SHADING = "partial_shading"
 CONF_HORIZON_FILEPATH = "horizon_filepath"
+# 0.1.33.5: per-array shading table (.txt/.csv) or geometry (.yaml/.yml) file
+CONF_SHADING_FILEPATH = "shading_filepath"
 CONF_MAX_SNOWCOVER_DEPTH_CM = "max_snowcover_depth_cm"
 CONF_MODEL = "model"
 

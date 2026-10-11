@@ -313,6 +313,11 @@ class ForecastSourceSensorEntity(
                 if self.coordinator.local_reader is not None
                 else None
             ),
+            # 0.1.33.5: per-array shading state (none / table / geometry / error)
+            "shading": [
+                {key: item.get(key) for key in ("array", "state", "error")}
+                for item in getattr(self.coordinator, "shading_report", [])
+            ],
         }
 
 

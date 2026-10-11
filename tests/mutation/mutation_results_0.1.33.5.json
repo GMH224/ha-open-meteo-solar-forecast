@@ -1,0 +1,980 @@
+{
+  "release": "0.1.33.5",
+  "date": "2026-10-11",
+  "summary": "107/108 caught; M71 documented equivalent mutant (0.1.33.4). New M74-M108: first run 32/35 (M76, M77, M80 escaped, tests strengthened), then 35/35.",
+  "first_run_escaped_new": [
+    "M76",
+    "M77",
+    "M80"
+  ],
+  "results": [
+    {
+      "id": "M01",
+      "description": "average labelled at the quarter START instead of its end",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_physics_validation.py::test_daily_energy_through_the_library_matches_a_one_minute_reference[30-90-0.015]"
+      ]
+    },
+    {
+      "id": "M02",
+      "description": "first label gets an average (covers the hour before the data)",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_the_first_label_carries_no_average_because_it_would_cover_the_previous_hour"
+      ]
+    },
+    {
+      "id": "M03",
+      "description": "clearness index not clamped",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_an_implausible_hour_average_is_clamped_and_counted"
+      ]
+    },
+    {
+      "id": "M04",
+      "description": "D-01 regression: hour clearness on a finer grid than the quarters",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_horizontal_plane_quarter_averages_conserve_hourly_ghi_and_dhi"
+      ]
+    },
+    {
+      "id": "M05",
+      "description": "D-02 regression: low-sun beam not reassigned to diffuse",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_horizontal_plane_quarter_averages_conserve_hourly_ghi_and_dhi"
+      ]
+    },
+    {
+      "id": "M06",
+      "description": "anisotropy index not clamped to 1",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_physics_validation.py::test_anisotropy_is_clamped_where_the_input_implies_dni_above_e0"
+      ]
+    },
+    {
+      "id": "M07",
+      "description": "azimuth convention: Open-Meteo value used as compass bearing",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_short_local_horizon_is_completed_by_open_meteo_day_by_day"
+      ]
+    },
+    {
+      "id": "M08",
+      "description": "ground-reflected term dropped",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_physics_validation.py::test_hay_davies_transposition_matches_pvlib[7-30-0]"
+      ]
+    },
+    {
+      "id": "M09",
+      "description": "published instants ignored (hour-average anchor only)",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_instant_values_at_hour_starts_reproduce_the_published_instants"
+      ]
+    },
+    {
+      "id": "M10",
+      "description": "diffuse-exceeds-global check removed",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_an_invalid_average_triple_is_dropped_but_the_instant_survives[change2]"
+      ]
+    },
+    {
+      "id": "M11",
+      "description": "incomplete triple accepted",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_an_invalid_average_triple_is_dropped_but_the_instant_survives[change4]"
+      ]
+    },
+    {
+      "id": "M12",
+      "description": "booleans accepted as numbers",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_an_invalid_average_triple_is_dropped_but_the_instant_survives[change8]"
+      ]
+    },
+    {
+      "id": "M13",
+      "description": "non-hour-aligned period_start accepted",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_entries_with_bad_timestamps_are_rejected_and_reported[change2-not on a full hour]"
+      ]
+    },
+    {
+      "id": "M14",
+      "description": "stale-series check removed",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_stale_local_data_in_hybrid_mode_does_not_silently_become_open_meteo"
+      ]
+    },
+    {
+      "id": "M15",
+      "description": "current-hour requirement removed",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_a_series_without_the_current_hour_average_is_refused"
+      ]
+    },
+    {
+      "id": "M16",
+      "description": "history resurrects future hours from cache",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_history_never_resurrects_a_future_hour_the_source_dropped"
+      ]
+    },
+    {
+      "id": "M17",
+      "description": "history not pruned",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_history_is_pruned_before_keep_from"
+      ]
+    },
+    {
+      "id": "M18",
+      "description": "Fahrenheit not converted",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_temperature_forecast_converts_fahrenheit_and_kelvin"
+      ]
+    },
+    {
+      "id": "M19",
+      "description": "temperature gaps bridged without limit",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_temperature_gaps_longer_than_three_hours_are_not_bridged"
+      ]
+    },
+    {
+      "id": "M20",
+      "description": "snow depth not applied",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_snow_depth_reduces_output_only_when_snow_derating_is_enabled"
+      ]
+    },
+    {
+      "id": "M21",
+      "description": "polar day/night can yield sunset == sunrise",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_source.py::test_polar_night_and_polar_day_never_produce_a_zero_length_day"
+      ]
+    },
+    {
+      "id": "M22",
+      "description": "fallback to Open-Meteo on by default",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_fallback_is_off_when_the_option_is_absent"
+      ]
+    },
+    {
+      "id": "M23",
+      "description": "fallback taken although disabled",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_stale_local_data_in_hybrid_mode_does_not_silently_become_open_meteo"
+      ]
+    },
+    {
+      "id": "M24",
+      "description": "local refresh interval 30 min",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_short_local_horizon_is_completed_by_open_meteo_day_by_day"
+      ]
+    },
+    {
+      "id": "M25",
+      "description": "Open-Meteo refresh interval changed",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_open_meteo_mode_is_unchanged_and_never_reads_local_entities"
+      ]
+    },
+    {
+      "id": "M26",
+      "description": "retained-source state not reported",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_hybrid_retains_and_recovers_like_local_mode"
+      ]
+    },
+    {
+      "id": "M27",
+      "description": "history never persisted",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_history_survives_a_restart"
+      ]
+    },
+    {
+      "id": "M28",
+      "description": "Fusion companion suffix wrong",
+      "file": "custom_components/open_meteo_solar_forecast/const.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_config_flow_hybrid_asks_for_the_local_entities"
+      ]
+    },
+    {
+      "id": "M29",
+      "description": "missing temperature accepted (no current temperature either)",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_no_temperature_at_all_is_refused"
+      ]
+    },
+    {
+      "id": "M30",
+      "description": "history merge skipped (only the fresh series is used)",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_energy_today_keeps_elapsed_hours_after_the_source_moves_on"
+      ]
+    },
+    {
+      "id": "M31",
+      "description": "D-05 regression: day sensors not masked in local mode",
+      "file": "custom_components/open_meteo_solar_forecast/sensor.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_open_meteo_down_keeps_the_local_days_and_marks_the_rest_unknown"
+      ]
+    },
+    {
+      "id": "M32",
+      "description": "night hours treated as daylight in day coverage",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_today_becomes_known_once_history_covers_the_morning"
+      ]
+    },
+    {
+      "id": "M33",
+      "description": "fallback keeps the local coverage mask on Open-Meteo data",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_fallback_clears_the_local_day_mask"
+      ]
+    },
+    {
+      "id": "M34",
+      "description": "day coverage not persisted with the retained forecast",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_day_coverage_survives_a_restart_with_the_retained_forecast"
+      ]
+    },
+    {
+      "id": "M35",
+      "description": "D-06 regression: weather service call unbounded",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_a_hung_weather_service_degrades_within_the_bound"
+      ]
+    },
+    {
+      "id": "M36",
+      "description": "D-07 regression: missing stored coverage masks every day",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_a_retained_fallback_forecast_is_not_masked_after_restart"
+      ]
+    },
+    {
+      "id": "M37",
+      "description": "parity: Open-Meteo failure message changed",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_open_meteo_mode_failure_text_and_logging_are_unchanged"
+      ]
+    },
+    {
+      "id": "M38",
+      "description": "hybrid: Open-Meteo overrides a complete local day",
+      "file": "custom_components/open_meteo_solar_forecast/hybrid.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid.py::test_complete_local_days_come_from_local_and_all_other_days_from_open_meteo"
+      ]
+    },
+    {
+      "id": "M39",
+      "description": "hybrid: incomplete Open-Meteo days accepted",
+      "file": "custom_components/open_meteo_solar_forecast/hybrid.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid.py::test_an_incomplete_open_meteo_day_is_not_used"
+      ]
+    },
+    {
+      "id": "M40",
+      "description": "hybrid: days taken in the source's own timezone",
+      "file": "custom_components/open_meteo_solar_forecast/hybrid.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid.py::test_open_meteo_in_another_offset_is_regrouped_into_local_days"
+      ]
+    },
+    {
+      "id": "M41",
+      "description": "hybrid: Open-Meteo fetched every local cycle",
+      "file": "custom_components/open_meteo_solar_forecast/const.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_open_meteo_is_refreshed_every_30_minutes_not_every_cycle"
+      ]
+    },
+    {
+      "id": "M42",
+      "description": "hybrid: no cache after a failed refresh",
+      "file": "custom_components/open_meteo_solar_forecast/const.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_a_failed_open_meteo_refresh_uses_the_cache_for_three_hours"
+      ]
+    },
+    {
+      "id": "M43",
+      "description": "hybrid: cache used without age limit",
+      "file": "custom_components/open_meteo_solar_forecast/const.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_a_failed_open_meteo_refresh_uses_the_cache_for_three_hours"
+      ]
+    },
+    {
+      "id": "M44",
+      "description": "hybrid: Open-Meteo failure fails the whole refresh",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_open_meteo_down_keeps_the_local_days_and_marks_the_rest_unknown"
+      ]
+    },
+    {
+      "id": "M45",
+      "description": "hybrid behaves like local (no Open-Meteo days)",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_short_local_horizon_is_completed_by_open_meteo_day_by_day"
+      ]
+    },
+    {
+      "id": "M46",
+      "description": "hybrid not treated as a local-based source",
+      "file": "custom_components/open_meteo_solar_forecast/const.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_short_local_horizon_is_completed_by_open_meteo_day_by_day"
+      ]
+    },
+    {
+      "id": "M47",
+      "description": "day sources not persisted",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_day_sources_survive_a_restart"
+      ]
+    },
+    {
+      "id": "M48",
+      "description": "0.1.33.2 retained coverage not read after upgrade",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_a_retained_forecast_from_0_1_33_2_is_read_as_local_days"
+      ]
+    },
+    {
+      "id": "M49",
+      "description": "source attribute added in Open-Meteo mode",
+      "file": "custom_components/open_meteo_solar_forecast/sensor.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_open_meteo_mode_day_sensors_have_no_source_attribute"
+      ]
+    },
+    {
+      "id": "M50",
+      "description": "release process: zip_release restored",
+      "file": "hacs.json",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid_integration.py::test_hacs_installs_from_the_tag_without_a_release_zip"
+      ]
+    },
+    {
+      "id": "M51",
+      "description": "V-1: partial local days dropped in hybrid",
+      "file": "custom_components/open_meteo_solar_forecast/hybrid.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid.py::test_partial_local_days_keep_their_data_but_get_no_day_source"
+      ]
+    },
+    {
+      "id": "M52",
+      "description": "OMSF-004: empty forecast accepted",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf004_an_empty_result_is_a_failure_not_a_success"
+      ]
+    },
+    {
+      "id": "M53",
+      "description": "OMSF-007: time window not applied",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf007_entries_outside_the_time_window_are_rejected"
+      ]
+    },
+    {
+      "id": "M54",
+      "description": "OMSF-008: no size cap",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": []
+    },
+    {
+      "id": "M55",
+      "description": "OMSF-011: 23 hours count as complete",
+      "file": "custom_components/open_meteo_solar_forecast/hybrid.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_hybrid.py::test_a_day_with_23_hours_is_not_complete"
+      ]
+    },
+    {
+      "id": "M56",
+      "description": "OMSF-018: URL query strings not removed",
+      "file": "custom_components/open_meteo_solar_forecast/errors.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf018_sanitize_removes_query_strings_and_secrets"
+      ]
+    },
+    {
+      "id": "M57",
+      "description": "OMSF-018: error length not bounded",
+      "file": "custom_components/open_meteo_solar_forecast/errors.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf018_sanitize_removes_query_strings_and_secrets"
+      ]
+    },
+    {
+      "id": "M58",
+      "description": "OMSF-013: no retry after a failed history read",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf013_history_load_is_retried_after_a_transient_failure"
+      ]
+    },
+    {
+      "id": "M59",
+      "description": "OMSF-015: malformed supported_features raises",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf015_supported_features_are_parsed_defensively[abc-weather_no_hourly]"
+      ]
+    },
+    {
+      "id": "M60",
+      "description": "OMSF-016: non-finite geometry accepted at parse",
+      "file": "custom_components/open_meteo_solar_forecast/local_source.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf016_non_finite_geometry_is_rejected_at_the_boundary[inf]"
+      ]
+    },
+    {
+      "id": "M61",
+      "description": "OMSF-005: snow depth not held",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf005_snow_depth_is_held_for_24_hours_then_assumed_zero"
+      ]
+    },
+    {
+      "id": "M62",
+      "description": "OMSF-006: temperature quality always 'forecast'",
+      "file": "custom_components/open_meteo_solar_forecast/local_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf006_degraded_temperature_is_visible_on_the_source_sensor"
+      ]
+    },
+    {
+      "id": "M63",
+      "description": "OMSF-001: several entries -> silently the last one",
+      "file": "custom_components/open_meteo_solar_forecast/__init__.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf001_service_with_several_entries_requires_an_entry_id"
+      ]
+    },
+    {
+      "id": "M64",
+      "description": "OMSF-002: service without schema",
+      "file": "custom_components/open_meteo_solar_forecast/__init__.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf002_invalid_coordinates_are_rejected_and_not_persisted[location0]"
+      ]
+    },
+    {
+      "id": "M65",
+      "description": "OMSF-002: bool accepted as coordinate",
+      "file": "custom_components/open_meteo_solar_forecast/__init__.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf002_invalid_coordinates_are_rejected_and_not_persisted[location4]"
+      ]
+    },
+    {
+      "id": "M66",
+      "description": "OMSF-003: no retention limit",
+      "file": "custom_components/open_meteo_solar_forecast/const.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf003_retained_forecast_expires_after_six_hours[open_meteo]"
+      ]
+    },
+    {
+      "id": "M67",
+      "description": "OMSF-003: source sensor unavailable with the others",
+      "file": "custom_components/open_meteo_solar_forecast/sensor.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf003_retained_forecast_expires_after_six_hours[open_meteo]"
+      ]
+    },
+    {
+      "id": "M68",
+      "description": "OMSF-009: non-finite horizon values accepted",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf009_shipped_sample_files_keep_their_classification[horizon_wrong_decimals.txt-False]"
+      ]
+    },
+    {
+      "id": "M69",
+      "description": "OMSF-009: horizon elevation range not checked",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf009_bad_content_gives_a_controlled_message[0\\t10\\n180\\t95\\n360\\t10\\n-Elevation]"
+      ]
+    },
+    {
+      "id": "M70",
+      "description": "OMSF-009: horizon file size not capped",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf009_io_problems_give_a_controlled_message"
+      ]
+    },
+    {
+      "id": "M71",
+      "description": "OMSF-012: AttributeError not caught for retained data",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "ESCAPED",
+      "first_failure": []
+    },
+    {
+      "id": "M72",
+      "description": "OMSF-012: retained values not checked for finiteness",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf012_malformed_retained_store_is_discarded[mutation3]"
+      ]
+    },
+    {
+      "id": "M73",
+      "description": "OMSF-019: 15-minute series recorded",
+      "file": "custom_components/open_meteo_solar_forecast/recorder.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_v0_1_33_4_audit_remediation.py::test_omsf019_all_large_series_are_excluded_from_the_recorder"
+      ]
+    },
+    {
+      "id": "M74",
+      "description": "blocked share inverted (k instead of 1-k), averages",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_open_meteo_mode_shading_reduces_only_shaded_hours"
+      ]
+    },
+    {
+      "id": "M75",
+      "description": "blocked share inverted, instants",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_table_apply.py::test_factor_one_leaves_the_payload_unchanged"
+      ]
+    },
+    {
+      "id": "M76",
+      "description": "low-sun guard removed",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_table_apply.py::test_quarter_average_ignores_sub_moments_below_one_degree"
+      ]
+    },
+    {
+      "id": "M77",
+      "description": "DNI not capped",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_table_apply.py::test_dni_is_capped_physically"
+      ]
+    },
+    {
+      "id": "M78",
+      "description": "diffuse light reduced as well",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_table_apply.py::test_factor_zero_removes_exactly_the_direct_light_on_the_plane"
+      ]
+    },
+    {
+      "id": "M79",
+      "description": "API azimuth used as compass bearing",
+      "file": "custom_components/open_meteo_solar_forecast/shading_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_open_meteo_mode_shading_reduces_only_shaded_hours"
+      ]
+    },
+    {
+      "id": "M80",
+      "description": "array counter not reset per estimate",
+      "file": "custom_components/open_meteo_solar_forecast/shading_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_open_meteo_mode_shading_reduces_only_shaded_hours"
+      ]
+    },
+    {
+      "id": "M81",
+      "description": "Open-Meteo mode never shaded",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_open_meteo_mode_shading_reduces_only_shaded_hours"
+      ]
+    },
+    {
+      "id": "M82",
+      "description": "parity broken: shaded class without shading",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_local_integration.py::test_open_meteo_mode_passes_the_same_library_arguments_as_before"
+      ]
+    },
+    {
+      "id": "M83",
+      "description": "local forecast not given the tables",
+      "file": "custom_components/open_meteo_solar_forecast/coordinator.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_local_mode_applies_the_same_shading"
+      ]
+    },
+    {
+      "id": "M84",
+      "description": "bad shading file fails the setup",
+      "file": "custom_components/open_meteo_solar_forecast/shading_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_invalid_file_never_stops_the_forecast"
+      ]
+    },
+    {
+      "id": "M85",
+      "description": "tracking check removed",
+      "file": "custom_components/open_meteo_solar_forecast/shading_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_tracking_array_with_shading_file_is_refused_gracefully"
+      ]
+    },
+    {
+      "id": "M86",
+      "description": "repair issue not cleared after a fix",
+      "file": "custom_components/open_meteo_solar_forecast/shading_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_missing_file_is_an_issue_and_fixing_it_clears_the_issue"
+      ]
+    },
+    {
+      "id": "M87",
+      "description": "cache ignores file changes",
+      "file": "custom_components/open_meteo_solar_forecast/shading_provider.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_changed_file_is_read_again"
+      ]
+    },
+    {
+      "id": "M88",
+      "description": "half-cut treated as full-cell",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_geometry.py::test_half_cut_keeps_half_the_current"
+      ]
+    },
+    {
+      "id": "M89",
+      "description": "string MPP replaced by the weakest section",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_examples.py::test_south_geometry_reproduces_the_fitted_analysis_model"
+      ]
+    },
+    {
+      "id": "M90",
+      "description": "section limited by mean instead of darkest cell",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_examples.py::test_south_shipped_table_equals_the_geometry"
+      ]
+    },
+    {
+      "id": "M91",
+      "description": "transparency ignored",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_geometry.py::test_monthly_transparency_of_a_deciduous_tree"
+      ]
+    },
+    {
+      "id": "M92",
+      "description": "monthly transparency not detected",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_examples.py::test_reference_example_with_all_types_is_valid"
+      ]
+    },
+    {
+      "id": "M93",
+      "description": "full-circle table does not wrap",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_geometry.py::test_table_from_geometry_round_trips_through_the_text_format"
+      ]
+    },
+    {
+      "id": "M94",
+      "description": "outside the table range treated as shaded",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_table_apply.py::test_partial_azimuth_range_means_unshaded_outside"
+      ]
+    },
+    {
+      "id": "M95",
+      "description": "duplicate table rows accepted",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_table_apply.py::test_invalid_tables_are_rejected_with_a_clear_message[0 0 1\\n0 0 1\\n180 0 1\\n180 90 1\\n-duplicate]"
+      ]
+    },
+    {
+      "id": "M96",
+      "description": "factor range not checked",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_invalid_file_never_stops_the_forecast"
+      ]
+    },
+    {
+      "id": "M97",
+      "description": "unknown YAML keys accepted",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_geometry.py::test_invalid_geometry_is_rejected_with_a_clear_message[data2-unknown key]"
+      ]
+    },
+    {
+      "id": "M98",
+      "description": "polygon planarity not checked",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_geometry.py::test_invalid_geometry_is_rejected_with_a_clear_message[data21-one plane]"
+      ]
+    },
+    {
+      "id": "M99",
+      "description": "obstacle overlapping the modules accepted",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_geometry.py::test_solid_overlapping_the_module_field_is_refused"
+      ]
+    },
+    {
+      "id": "M100",
+      "description": "work budget ignored",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_geometry.py::test_work_budget_reduces_samples_then_refuses"
+      ]
+    },
+    {
+      "id": "M101",
+      "description": "gable roof flattened to ridge height",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_examples.py::test_south_geometry_reproduces_the_fitted_analysis_model"
+      ]
+    },
+    {
+      "id": "M102",
+      "description": "cylinder/cone radius ignored",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_examples.py::test_reference_example_with_all_types_is_valid"
+      ]
+    },
+    {
+      "id": "M103",
+      "description": "config flow does not validate the file",
+      "file": "custom_components/open_meteo_solar_forecast/config_flow.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_config_flow_rejects_an_invalid_shading_file"
+      ]
+    },
+    {
+      "id": "M104",
+      "description": "sun azimuth mirrored (morning/afternoon swapped)",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_integration.py::test_open_meteo_mode_shading_reduces_only_shaded_hours"
+      ]
+    },
+    {
+      "id": "M105",
+      "description": "averages evaluated at the label instead of inside the quarter",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_table_apply.py::test_factor_zero_removes_exactly_the_direct_light_on_the_plane"
+      ]
+    },
+    {
+      "id": "M106",
+      "description": "month index off by one",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_table_apply.py::test_month_selects_the_monthly_factor"
+      ]
+    },
+    {
+      "id": "M107",
+      "description": "string membership ignored",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_examples.py::test_reference_example_with_all_types_is_valid"
+      ]
+    },
+    {
+      "id": "M108",
+      "description": "unshaded not snapped to exactly 1 (parity noise)",
+      "file": "custom_components/open_meteo_solar_forecast/shading.py",
+      "status": "CAUGHT",
+      "first_failure": [
+        "tests/test_shading_table_apply.py::test_factor_one_leaves_the_payload_unchanged"
+      ]
+    }
+  ]
+}

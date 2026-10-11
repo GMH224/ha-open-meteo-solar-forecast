@@ -1,0 +1,79 @@
+# Shading geometry - reference example with every obstacle type (version 1).
+#
+# Frame: metres; x = east, y = north, z = up; choose any origin (e.g. a house
+# corner at eave height). Angles are compass degrees: 0 = north, 90 = east,
+# 180 = south, 270 = west. Lists of three numbers are [x, y, z]; centres of
+# footprints are [x, y].
+#
+# Put the file e.g. at /config/shading/roof_south.yaml and enter that path as
+# "Shading file" in the array settings. One file describes ONE module field.
+version: 1
+
+# How shade becomes lost power:
+#   bypass (default) - a bypass-diode section is limited by its darkest cell;
+#                      shaded sections are bypassed (string maximum power point)
+#   area             - loss proportional to the shaded area (optimisers / micro-inverters)
+electrical_model: bypass
+
+array:
+  azimuth: 180          # direction the panels face
+  tilt: 35              # 0 = flat, 90 = vertical
+  origin: [0, 0, 3.2]   # lower-left corner of the module field, seen from the front
+  rows: 2               # row 1 = bottom
+  columns: 6            # column 1 = left (seen from the front)
+  module_width: 1.13    # along a row; width > height means landscape
+  module_height: 1.72   # up the slope
+  gap: 0.02             # between modules (optional, default 0.02)
+  bypass_diodes: 3      # per module (optional, default 3)
+  cell_type: half_cut   # full (default) or half_cut
+  strings:              # optional; default = all modules in one string
+    - [r1c1, r1c2, r1c3, r2c1, r2c2, r2c3]
+    - [r1c4, r1c5, r1c6, r2c4, r2c5, r2c6]
+
+obstacles:
+  - type: box                     # chimney, dormer, solar water heater ...
+    name: chimney
+    center: [8.0, 1.5]           # east of the module field, on the same roof
+    width: 0.6                    # along `azimuth`
+    depth: 0.6
+    azimuth: 90                   # direction of the width axis (default 90 = east)
+    bottom: 3.0                   # default 0
+    top: 6.5
+
+  - type: gable_building          # neighbouring house or another wing
+    name: neighbour
+    center: [-14, -3]             # centre of the footprint
+    ridge_azimuth: 0              # direction the ridge runs
+    length: 12
+    width: 9
+    eave_height: 5
+    ridge_height: 8.5
+    bottom: 0                     # optional (default: below the eave)
+
+  - type: polygon                 # any flat shape: wall, fence, roof face, noise barrier
+    name: garage wall
+    vertices: [[9, -4, 0], [9, 4, 0], [9, 4, 4.5], [9, -4, 4.5]]   # must lie in one plane
+
+  - type: cylinder                # mast, round tower, column-shaped tree
+    name: flag pole
+    center: [4, -9]
+    radius: 0.1
+    bottom: 0
+    top: 9
+
+  - type: cone                    # conifer; radius_top > 0 gives a truncated cone
+    name: spruce
+    center: [-6, -15]
+    radius: 2.5                   # at `bottom`
+    radius_top: 0
+    bottom: 2                     # crown starts 2 m above ground
+    top: 16
+    transparency: 0.1             # share of light passing (0 = opaque)
+
+  - type: cylinder                # deciduous tree: see-through in winter
+    name: birch
+    center: [12, -10]
+    radius: 3
+    bottom: 3
+    top: 14
+    transparency: [0.7, 0.7, 0.6, 0.3, 0, 0, 0, 0, 0, 0.2, 0.6, 0.7]   # Jan..Dec

@@ -34,6 +34,7 @@ from .const import (
     CONF_USE_HORIZON,
     CONF_PARTIAL_SHADING,
     CONF_HORIZON_FILEPATH,
+    CONF_SHADING_FILEPATH,
     CONF_MAX_SNOWCOVER_DEPTH_CM,
     CONF_MODULES_POWER,
     CONF_TRACKING,
@@ -77,6 +78,7 @@ PER_ARRAY_KEYS = (
     CONF_USE_HORIZON,
     CONF_PARTIAL_SHADING,
     CONF_HORIZON_FILEPATH,
+    CONF_SHADING_FILEPATH,
 )
 
 
@@ -99,6 +101,7 @@ def _array_defaults(latitude: float, longitude: float) -> dict[str, Any]:
         CONF_USE_HORIZON: False,
         CONF_PARTIAL_SHADING: False,
         CONF_HORIZON_FILEPATH: DEFAULT_HORIZON_FILEPATH,
+        CONF_SHADING_FILEPATH: "",
     }
 
 
@@ -189,6 +192,12 @@ def _array_schema(defaults: dict[str, Any], add_another_default: bool) -> vol.Sc
                 CONF_HORIZON_FILEPATH,
                 default=defaults.get(CONF_HORIZON_FILEPATH, DEFAULT_HORIZON_FILEPATH),
             ): str,
+            # 0.1.33.5: optional; empty = no shading. Suggested value (not a
+            # default) so the field can be cleared again.
+            vol.Optional(
+                CONF_SHADING_FILEPATH,
+                description={"suggested_value": defaults.get(CONF_SHADING_FILEPATH) or ""},
+            ): str,
             vol.Optional(CONF_ADD_ANOTHER, default=add_another_default): BooleanSelector(),
         }
     )
@@ -198,7 +207,23 @@ def _normalize_array_input(user_input: dict[str, Any]) -> dict[str, Any]:
     array = {key: user_input.get(key) for key in PER_ARRAY_KEYS}
     filepath = str(array[CONF_HORIZON_FILEPATH] or "").strip()
     array[CONF_HORIZON_FILEPATH] = filepath or DEFAULT_HORIZON_FILEPATH
+    array[CONF_SHADING_FILEPATH] = str(array.get(CONF_SHADING_FILEPATH) or "").strip()
     return array
+
+
+async def _validate_array(hass: Any, array: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+    """0.1.33.5: check the shading file of one array; (errors, placeholders)."""
+    path = array.get(CONF_SHADING_FILEPATH) or ""
+    if not path:
+        return {}, {}
+    if array.get(CONF_TRACKING, "none") != "none":
+        return {CONF_SHADING_FILEPATH: "shading_requires_fixed_array"}, {}
+    from .shading_provider import validate_shading_file
+
+    message = await hass.async_add_executor_job(validate_shading_file, path)
+    if message is None:
+        return {}, {}
+    return {CONF_SHADING_FILEPATH: "invalid_shading_file"}, {"shading_error": message}
 
 
 def _collapse_arrays(arrays: list[dict[str, Any]]) -> dict[str, Any]:
@@ -414,9 +439,14 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the settings of one PV array."""
+        errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {}
         if user_input is not None:
             add_another = user_input.get(CONF_ADD_ANOTHER, False)
-            self._arrays.append(_normalize_array_input(user_input))
+            array = _normalize_array_input(user_input)
+            errors, placeholders = await _validate_array(self.hass, array)
+        if user_input is not None and not errors:
+            self._arrays.append(array)
             if add_another:
                 return await self.async_step_array()
 
@@ -447,10 +477,16 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
         )
         if self._arrays:
             defaults = dict(self._arrays[-1])
+        if errors:
+            defaults = {**defaults, **array}
         return self.async_show_form(
             step_id="array",
             data_schema=_array_schema(defaults, add_another_default=False),
-            description_placeholders={"array_number": str(len(self._arrays) + 1)},
+            description_placeholders={
+                "array_number": str(len(self._arrays) + 1),
+                "shading_error": placeholders.get("shading_error", ""),
+            },
+            errors=errors,
         )
 
 
@@ -550,9 +586,14 @@ class OpenMeteoSolarForecastOptionFlowHandler(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the settings of one PV array."""
+        errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {}
         if user_input is not None:
             add_another = user_input.get(CONF_ADD_ANOTHER, False)
-            self._arrays.append(_normalize_array_input(user_input))
+            array = _normalize_array_input(user_input)
+            errors, placeholders = await _validate_array(self.hass, array)
+        if user_input is not None and not errors:
+            self._arrays.append(array)
             if add_another:
                 return await self.async_step_array()
 
@@ -582,8 +623,15 @@ class OpenMeteoSolarForecastOptionFlowHandler(OptionsFlow):
         # Default to walking through all previously configured arrays;
         # unchecking the box early drops the remaining arrays.
         add_another_default = index + 1 < len(self._stored_arrays)
+        if errors:
+            defaults = {**defaults, **array}
+            add_another_default = bool(user_input.get(CONF_ADD_ANOTHER, False))
         return self.async_show_form(
             step_id="array",
             data_schema=_array_schema(defaults, add_another_default),
-            description_placeholders={"array_number": str(index + 1)},
+            description_placeholders={
+                "array_number": str(index + 1),
+                "shading_error": placeholders.get("shading_error", ""),
+            },
+            errors=errors,
         )

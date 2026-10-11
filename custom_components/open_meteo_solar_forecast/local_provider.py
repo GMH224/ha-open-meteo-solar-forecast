@@ -41,6 +41,7 @@ from .const import (
     LOGGER,
 )
 from .errors import sanitize_error
+from .shading_provider import ShadingMixin
 from .local_source import (
     HourRecord,
     LocalSnapshot,
@@ -142,12 +143,14 @@ def validate_weather_entity(hass: HomeAssistant, entity_id: str | None) -> str |
 # --------------------------------------------------------------------------
 
 
-class LocalOpenMeteoSolarForecast(OpenMeteoSolarForecast):
+class LocalOpenMeteoSolarForecast(ShadingMixin, OpenMeteoSolarForecast):
     """Upstream forecast class fed from a local snapshot.
 
     Only ``_request`` is overridden: the library calls it once per array
     with that array's latitude, longitude, tilt and azimuth, and receives a
     synthesised Open-Meteo response. All PV physics stay in the library.
+    0.1.33.5: the response passes through the same per-array shading step
+    as Open-Meteo responses (``ShadingMixin``).
     """
 
     hass: HomeAssistant | None = None
@@ -177,7 +180,8 @@ class LocalOpenMeteoSolarForecast(OpenMeteoSolarForecast):
         )
         if self.local_stats is not None:
             self.local_stats.append(asdict(stats))
-        return payload
+        # 0.1.33.5: per-array partial shading (no-op without a shading file)
+        return await self._apply_shading(payload, params)
 
 
 def _build_payload_job(

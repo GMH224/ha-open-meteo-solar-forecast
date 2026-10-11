@@ -57,6 +57,8 @@ from .const import (
     SOURCE_OPEN_METEO,
 )
 from .errors import sanitize_error
+from .shading import ShadingTable
+from .shading_provider import ShadedOpenMeteoSolarForecast, ShadingStatus
 from .hybrid import DAY_SOURCE_LOCAL, DAY_SOURCE_OPEN_METEO, merge_hybrid
 from .local_provider import (
     LocalDataError,
@@ -260,6 +262,8 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         hass: HomeAssistant,
         entry: ConfigEntry,
         horizon_map: tuple[tuple[float, float], ...] | list[tuple[tuple[float, float], ...]],
+        shading_tables: list[ShadingTable | None] | None = None,
+        shading_statuses: list[ShadingStatus] | None = None,
     ) -> None:
         """Initialize the Solar Forecast coordinator."""
         self.config_entry = entry
@@ -359,13 +363,27 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             "horizon_map": horizon_map,
             "max_snowcover_depth_cm": entry.options.get(CONF_MAX_SNOWCOVER_DEPTH_CM, 0.0),
         }
-        self.forecast = OpenMeteoSolarForecast(
+        # 0.1.33.5: partial shading. Without any valid shading table the
+        # unmodified library class is used (Open-Meteo parity).
+        self.shading_statuses: list[ShadingStatus] = list(shading_statuses or [])
+        active_shading = (
+            list(shading_tables)
+            if shading_tables and any(t is not None for t in shading_tables)
+            else None
+        )
+        forecast_class = (
+            ShadedOpenMeteoSolarForecast if active_shading else OpenMeteoSolarForecast
+        )
+        self.forecast = forecast_class(
             api_key=api_key,
             session=async_get_clientsession(hass),
             base_url=entry.options[CONF_BASE_URL],
             weather_model=entry.options.get(CONF_MODEL, "best_match"),
             **forecast_kwargs,
         )
+        if active_shading:
+            self.forecast.shading_tables = active_shading
+            self.forecast.shading_hass = hass
 
         # 0.1.33.2: optional local weather source (OMSF_v0_1_33_2_Architecture_ICS.md).
         self.weather_source: str = entry.options.get(
@@ -405,6 +423,9 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             # data request differs. No API key, URL or session: the local
             # adapter never performs network I/O.
             self.local_forecast = LocalOpenMeteoSolarForecast(**forecast_kwargs)
+            if active_shading:
+                self.local_forecast.shading_tables = active_shading
+                self.local_forecast.shading_hass = hass
             update_interval = timedelta(minutes=LOCAL_UPDATE_MINUTES)
         else:
             update_interval = timedelta(minutes=OPEN_METEO_UPDATE_MINUTES)
@@ -573,6 +594,19 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         self._last_successful_update = dt_util.utcnow()
         self._save_retained_estimate(estimate)
         return estimate
+
+    @property
+    def shading_report(self) -> list[dict[str, Any]]:
+        """Per-array shading state and the effect of the last refresh (0.1.33.5)."""
+        report = []
+        for status in self.shading_statuses:
+            item = status.as_dict()
+            for name, forecast in (("open_meteo", self.forecast), ("local", self.local_forecast)):
+                stats = getattr(forecast, "shading_stats", None) if forecast is not None else None
+                if stats and status.array < len(stats) and stats[status.array] is not None:
+                    item[f"last_{name}"] = stats[status.array]
+            report.append(item)
+        return report
 
     def _retained_within_age_limit(self) -> bool:
         last = self._last_successful_update

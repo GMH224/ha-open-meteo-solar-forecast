@@ -26,6 +26,9 @@ SRC = PKG + "local_source.py"
 PROV = PKG + "local_provider.py"
 COORD = PKG + "coordinator.py"
 INIT_PY = PKG + "__init__.py"
+SHD = PKG + "shading.py"
+SHP = PKG + "shading_provider.py"
+FLOW = PKG + "config_flow.py"
 
 # (id, description, file, original, mutated)
 MUTATIONS = [
@@ -210,14 +213,103 @@ MUTATIONS = [
      '    if False:\n        raise'),
     ("M73", "OMSF-019: 15-minute series recorded", PKG + "recorder.py",
      "    return {ATTR_WATTS, ATTR_WH_PERIOD, ATTR_WH_PERIOD_15M}", "    return {ATTR_WATTS, ATTR_WH_PERIOD}"),
+    # ---- 0.1.33.5: partial shading -------------------------------------
+    ("M74", "blocked share inverted (k instead of 1-k), averages", SHD,
+     "blocked = dni * np.where(up, caoi * (1 - k), 0).mean(axis=1)",
+     "blocked = dni * np.where(up, caoi * k, 0).mean(axis=1)"),
+    ("M75", "blocked share inverted, instants", SHD,
+     "blocked_i = dni_i * caoi_i * (1 - k_i)", "blocked_i = dni_i * caoi_i * k_i"),
+    ("M76", "low-sun guard removed", SHD,
+     "    up = el > MIN_SUN_ELEVATION_DEG\n", "    up = el > -90.0\n"),
+    ("M77", "DNI not capped", SHD,
+     "    dni = np.minimum(dni, MAX_DNI_W_M2)\n", "    dni = dni\n"),
+    ("M78", "diffuse light reduced as well", SHD,
+     "new_gti = np.where(ok, np.clip(gti - blocked, 0, None), gti)",
+     "new_gti = np.where(ok, np.clip(gti * k.mean(axis=1), 0, None), gti)"),
+    ("M79", "API azimuth used as compass bearing", SHP,
+     'azimuth = (float(params["azimuth"]) + 180.0) % 360.0',
+     'azimuth = float(params["azimuth"]) % 360.0'),
+    ("M80", "array counter not reset per estimate", SHP,
+     "        self._shading_index = 0\n        self.shading_stats = []",
+     "        self.shading_stats = []"),
+    ("M81", "Open-Meteo mode never shaded", COORD,
+     "ShadedOpenMeteoSolarForecast if active_shading else OpenMeteoSolarForecast",
+     "OpenMeteoSolarForecast if active_shading else OpenMeteoSolarForecast"),
+    ("M82", "parity broken: shaded class without shading", COORD,
+     "ShadedOpenMeteoSolarForecast if active_shading else OpenMeteoSolarForecast",
+     "ShadedOpenMeteoSolarForecast if True else OpenMeteoSolarForecast"),
+    ("M83", "local forecast not given the tables", COORD,
+     "                self.local_forecast.shading_tables = active_shading\n",
+     "                pass\n"),
+    ("M84", "bad shading file fails the setup", SHP,
+     "        except Exception as err:  # noqa: BLE001 - a bad file must not stop the forecast\n",
+     "        except ZeroDivisionError as err:\n"),
+    ("M85", "tracking check removed", SHP,
+     '            if tracking[index] != "none":\n', "            if False:\n"),
+    ("M86", "repair issue not cleared after a fix", SHP,
+     "        ir.async_delete_issue(hass, DOMAIN, issue)\n        status = ShadingStatus(",
+     "        status = ShadingStatus("),
+    ("M87", "cache ignores file changes", SHP,
+     "if cached is not None and cached[0] == stat.st_size and cached[1] == stat.st_mtime_ns:",
+     "if cached is not None:"),
+    ("M88", "half-cut treated as full-cell", SHD,
+     "        section = darkest.mean(axis=-1)\n", "        section = darkest.min(axis=-1)\n"),
+    ("M89", "string MPP replaced by the weakest section", SHD,
+     "power += (caps * (n - np.arange(n))[None, :]).max(axis=1)",
+     "power += caps[:, 0] * n"),
+    ("M90", "section limited by mean instead of darkest cell", SHD,
+     "    darkest = light.min(axis=-1)  # (nd, modules, diodes, 2)",
+     "    darkest = light.mean(axis=-1)  # (nd, modules, diodes, 2)"),
+    ("M91", "transparency ignored", SHD,
+     "light[m] = np.where(hit, light[m] * tr[m], light[m])",
+     "light[m] = np.where(hit, 0.0, light[m])"),
+    ("M92", "monthly transparency not detected", SHD,
+     "monthly = any(np.ptp(o.transparency) > 0 for o in geom.obstacles)", "monthly = False"),
+    ("M93", "full-circle table does not wrap", SHD,
+     "            wraps = True\n", "            wraps = False\n"),
+    ("M94", "outside the table range treated as shaded", SHD,
+     "return np.where(inside_az & ~above, np.clip(f, 0.0, 1.0), 1.0)",
+     "return np.clip(f, 0.0, 1.0)"),
+    ("M95", "duplicate table rows accepted", SHD,
+     "            if seen[ai[idx], ei[idx]]:\n", "            if False:\n"),
+    ("M96", "factor range not checked", SHD,
+     "    if np.any((fac < 0) | (fac > 1)):\n", "    if False:\n"),
+    ("M97", "unknown YAML keys accepted", SHD,
+     "    unknown = sorted(str(k) for k in obj if k not in allowed)", "    unknown = []"),
+    ("M98", "polygon planarity not checked", SHD,
+     "        if np.max(np.abs((vertices - centre) @ normal)) > 0.05:\n", "        if False:\n"),
+    ("M99", "obstacle overlapping the modules accepted", SHD,
+     "        if obstacle.contains(corners).any():\n", "        if False:\n"),
+    ("M100", "work budget ignored", SHD,
+     "        if n_dir * n_points * primitive_cost <= WORK_BUDGET:\n", "        if True:\n"),
+    ("M101", "gable roof flattened to ridge height", SHD,
+     "    rise = (ridge - eave) / half  # roof slope (m per m)", "    rise = 0.0"),
+    ("M102", "cylinder/cone radius ignored", SHD,
+     "            hit |= ok & (f <= 0) & (rad >= 0)", "            hit |= ok & (rad >= 0)"),
+    ("M103", "config flow does not validate the file", FLOW,
+     "    message = await hass.async_add_executor_job(validate_shading_file, path)\n",
+     "    message = None\n"),
+    ("M104", "sun azimuth mirrored (morning/afternoon swapped)", SHD,
+     "    az = np.where(ha > 0, np.mod(az + 180, 360), np.mod(540 - az, 360))",
+     "    az = np.where(ha < 0, np.mod(az + 180, 360), np.mod(540 - az, 360))"),
+    ("M105", "averages evaluated at the label instead of inside the quarter", SHD,
+     "    offsets = np.array([-12.5, -7.5, -2.5]) * 60.0", "    offsets = np.array([0.0, 0.0, 0.0]) * 60.0"),
+    ("M106", "month index off by one", SHD,
+     '.astype("datetime64[M]").astype(int) % 12 + 1', '.astype("datetime64[M]").astype(int) % 12'),
+    ("M107", "string membership ignored", SHD,
+     "section[:, members, :].reshape(section.shape[0], -1)", "section.reshape(section.shape[0], -1)"),
+    ("M108", "unshaded not snapped to exactly 1 (parity noise)", SHD,
+     "    k = np.where(k > 1 - 1e-9, 1.0, k)  # unshaded must be exactly unshaded\n", ""),
 ]
 
 
-def run(root: Path, only: str | None) -> list[dict]:
+def run(root: Path, only: str | None, start: str | None = None) -> list[dict]:
     results = []
     python = sys.executable
     for mid, desc, rel, original, mutated in MUTATIONS:
         if only and mid != only:
+            continue
+        if start and int(mid[1:]) < int(start[1:]):
             continue
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp) / "repo"
@@ -230,8 +322,11 @@ def run(root: Path, only: str | None) -> list[dict]:
                 print(mid, "NOT APPLIED", count, flush=True)
                 continue
             target.write_text(text.replace(original, mutated))
+            # Shading tests first (0.1.33.5): a caught mutation stops early;
+            # pytest de-duplicates the files listed again via "tests".
+            first = sorted(str(p.relative_to(work)) for p in (work / "tests").glob("test_shading_*.py"))
             proc = subprocess.run(
-                [python, "-m", "pytest", "-q", "-x", "-W", "ignore", "-p", "no:randomly"],
+                [python, "-m", "pytest", "-q", "-x", "-W", "ignore", "-p", "no:randomly", *first, "tests"],
                 cwd=work, capture_output=True, text=True, timeout=900,
             )
             failed = [
@@ -248,10 +343,11 @@ def run(root: Path, only: str | None) -> list[dict]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--only")
+    parser.add_argument("--from", dest="start", help="run mutations from this id on (e.g. M74)")
     parser.add_argument("--out", default="mutation_results.json")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
-    results = run(root, args.only)
+    results = run(root, args.only, args.start)
     Path(args.out).write_text(json.dumps(results, indent=2))
     escaped = [r for r in results if r["status"] != "CAUGHT"]
     print(f"{len(results) - len(escaped)}/{len(results)} caught")

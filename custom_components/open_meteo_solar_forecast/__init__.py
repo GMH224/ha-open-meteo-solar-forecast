@@ -20,6 +20,7 @@ from .const import (
     CONF_DECLINATION,
     CONF_EFFICIENCY_FACTOR,
     CONF_HORIZON_FILEPATH,
+    CONF_SHADING_FILEPATH,
     CONF_MODULES_POWER,
     CONF_PARTIAL_SHADING,
     CONF_TRACKING,
@@ -27,6 +28,7 @@ from .const import (
     CONF_MAX_SNOWCOVER_DEPTH_CM,
     DOMAIN,
 )
+from .shading_provider import async_delete_shading_issues, async_load_shading
 from .coordinator import (
     STORAGE_VERSION,
     OpenMeteoSolarForecastDataUpdateCoordinator,
@@ -150,6 +152,7 @@ def _resolve_array_count(entry: ConfigEntry) -> int:
         entry.options.get(CONF_USE_HORIZON, False),
         entry.options.get(CONF_PARTIAL_SHADING, False),
         entry.options.get(CONF_HORIZON_FILEPATH),
+        entry.options.get(CONF_SHADING_FILEPATH),
         entry.options.get(CONF_MAX_SNOWCOVER_DEPTH_CM),
     )
     lengths = [len(value) for value in candidates if _is_sequence(value)]
@@ -227,8 +230,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         horizon_map = horizon_maps
 
+    # 0.1.33.5: optional partial shading per array. Never fails the setup:
+    # a faulty file is reported as a repair issue and that array runs
+    # without shading.
+    shading_paths = _normalize_option(
+        entry.options.get(CONF_SHADING_FILEPATH, ""), array_count, default=""
+    )
+    shading_tables, shading_statuses = await async_load_shading(
+        hass,
+        entry.entry_id,
+        shading_paths,
+        _normalize_option(entry.options.get(CONF_TRACKING, "none"), array_count, default="none"),
+        [float(v) for v in _normalize_option(entry.options.get(CONF_AZIMUTH), array_count, default=180)],
+        [float(v) for v in _normalize_option(entry.options.get(CONF_DECLINATION), array_count, default=0)],
+    )
+
     coordinator = OpenMeteoSolarForecastDataUpdateCoordinator(
-        hass, entry, horizon_map
+        hass, entry, horizon_map, shading_tables, shading_statuses
     )
     await coordinator.async_config_entry_first_refresh()
 
@@ -256,6 +274,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await Store(
         hass, HISTORY_STORAGE_VERSION, history_storage_key(entry.entry_id)
     ).async_remove()
+    async_delete_shading_issues(hass, entry.entry_id)
 
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
