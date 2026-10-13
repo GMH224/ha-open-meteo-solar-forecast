@@ -157,12 +157,16 @@ class Fake:
                 {"unit_of_measurement": "kWh", "state_class": "total_increasing", "device_class": "energy"},
             )
 
-    def station(self, end: datetime, ghi: float = 0.0) -> None:
-        self.hass.states.async_set(
-            STATION, end.isoformat(),
-            {"values": {"gre000z0": ghi, "ods000z0": ghi * 0.3, "sre000z0": 0, "oli000z0": 330,
-                        "osr000z0": ghi * 0.1, "tre200s0": 8.7}, "age_minutes": 12.0},
-        )
+    @staticmethod
+    def station_values(ghi: float) -> dict:
+        return {"gre000z0": ghi, "ods000z0": ghi * 0.3, "sre000z0": 0, "oli000z0": 330,
+                "osr000z0": ghi * 0.1, "tre200s0": 8.7}
+
+    def station(self, end: datetime, ghi: float = 0.0, recent: list | None = None) -> None:
+        attributes = {"values": self.station_values(ghi), "age_minutes": 12.0}
+        if recent is not None:  # Fusion >= 0.3.5
+            attributes["recent_values"] = recent
+        self.hass.states.async_set(STATION, end.isoformat(), attributes)
 
 
 async def setup_array(hass, title="South", options=None):
@@ -804,3 +808,55 @@ async def test_frozen_learning_keeps_the_calibration(hass, zurich, freezer):
     await hub.async_set_frozen(False)
     await hub.async_run_nightly(NOW + timedelta(days=1))
     assert hub.data.d["stage2"]["computed"] != "frozen-marker"
+
+
+
+async def test_recent_values_fill_the_records_the_latest_value_skipped(hass, zurich, freezer):
+    """13 Oct 2026, live: only about every second record reached the state.
+    With Fusion 0.3.5 the list carries all of them; hours become complete."""
+    fake, _, _, hub = await basic(hass, freezer)
+    hour = HOUR0 - timedelta(hours=2)
+    ends = [hour + timedelta(minutes=10 * i) for i in range(1, 13)]  # two full hours
+    ghi = {end: 100.0 + 10 * i for i, end in enumerate(ends)}
+    hub.data.d["station_samples"].clear()
+    for i, end in enumerate(ends):
+        if i % 2 == 0:  # the latest-only view skips every second record ...
+            continue
+        freezer.move_to(end + timedelta(minutes=15))
+        recent = [{"time": e.isoformat(), "values": fake.station_values(ghi[e])} for e in ends[: i + 1]]
+        fake.station(end, ghi=ghi[end], recent=recent)  # ... the list does not
+        await hass.async_block_till_done()
+    hub.data.finalize_station_hours(HOUR0 + timedelta(minutes=30))
+    for start in (hour, hour + timedelta(hours=1)):
+        measured = hub.data.d["station_hours"][L.hour_key(start)]
+        expected = [ghi[e] for e in ends if start < e <= start + timedelta(hours=1)]
+        assert measured[-1] == 6.0 and measured[0] == pytest.approx(sum(expected) / 6)
+    assert hub.station_status["recent_values"] == 12
+    assert len(hub.data.d["station_samples"]) == 12  # 6 seen as latest value, all 12 via the list
+
+
+async def test_without_recent_values_the_strict_rule_leaves_hours_open(hass, zurich, freezer):
+    fake, _, _, hub = await basic(hass, freezer)
+    hour = HOUR0 - timedelta(hours=1)
+    hub.data.d["station_samples"].clear()
+    for i in range(1, 7, 2):  # every second record only (Fusion 0.3.4)
+        end = hour + timedelta(minutes=10 * i)
+        freezer.move_to(end + timedelta(minutes=15))
+        fake.station(end, ghi=100.0)
+        await hass.async_block_till_done()
+    hub.data.finalize_station_hours(HOUR0 + timedelta(minutes=30))
+    assert L.hour_key(hour) not in hub.data.d["station_hours"]
+    assert hub.station_status["recent_values"] == 0
+
+
+async def test_startup_keeps_its_own_report_and_sets_since(hass, zurich, freezer):
+    _, _, _, hub = await basic(hass, freezer)
+    assert hub.data.d["state"]["since"] is not None
+    with patch.object(hub, "_async_backfill_station", AsyncMock(return_value="0 samples, 0 hours")), patch.object(
+        hub, "async_run_nightly", AsyncMock()
+    ):
+        await hub.async_run_startup()
+    assert hub.last_startup["station_backfill"] == "0 samples, 0 hours"
+    assert "forecast" in hub.last_hourly  # the hourly report did not overwrite it
+    attributes = hass.states.get("sensor.solar_forecast_learning_last_run").attributes
+    assert attributes["startup"]["station_backfill"] == "0 samples, 0 hours"

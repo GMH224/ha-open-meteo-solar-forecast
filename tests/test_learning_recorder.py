@@ -95,3 +95,25 @@ async def test_station_backfill_from_history(recorder_mock, enable_custom_integr
     assert L.hour_key(HOUR0 - timedelta(hours=2)) in hub.data.d["station_hours"]
 
 
+
+
+async def test_backfill_reads_recent_values_relative_to_the_state_time(
+    recorder_mock, enable_custom_integrations, hass, zurich, freezer
+):
+    """A state written 9 h ago carries its own list: judged against its own
+    time, not against now (otherwise the first-start backfill loses it)."""
+    from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
+
+    fake, _, _, hub = await basic(hass, freezer)
+    hour = HOUR0 - timedelta(hours=10)
+    ends = [hour + timedelta(minutes=10 * i) for i in range(1, 7)]
+    freezer.move_to(ends[-1] + timedelta(minutes=15))
+    recent = [{"time": e.isoformat(), "values": fake.station_values(200.0)} for e in ends]
+    fake.station(ends[-1], ghi=200.0, recent=recent)
+    await hass.async_block_till_done()
+    await async_wait_recording_done(hass)
+    freezer.move_to(NOW)
+    hub.data.d["station_samples"].clear()
+    hub.data.d["station_hours"].clear()
+    await hub._async_backfill_station(NOW, timedelta(hours=12))
+    assert hub.data.d["station_hours"][L.hour_key(hour)][-1] == 6.0

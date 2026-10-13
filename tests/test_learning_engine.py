@@ -860,3 +860,43 @@ def test_hours_with_the_sun_below_five_degrees_get_no_predictors():
     rec = HourRecord(start=L.key_to_dt(key), ghi=20.0, dni=50.0, dhi=15.0)
     full = (40.0, 10.0, 5.0, 12.0, 8.0)
     assert L.build_predictors({rec.start: rec}, {key: full, key + 3600: full}, LAT, LON) == {}
+
+
+# ---------------------------------------------------------------------------
+# 0.1.34.1: Fusion >= 0.3.5 `recent_values`
+# ---------------------------------------------------------------------------
+
+
+def _rec(minutes, ghi=100.0, **extra):
+    end = NOON + timedelta(minutes=minutes)
+    return {"time": end.isoformat(), "values": {**_values(ghi=ghi), **extra}}
+
+
+def test_recent_values_are_parsed_record_by_record():
+    raw = [_rec(10), _rec(20, ghi=200.0), "junk", {"time": "no"}, _rec(30, ghi=None),
+           _rec(-8 * 60), _rec(60 + 30)]  # too old / too far ahead of the reference
+    samples, rejected = L.parse_station_list(raw, NOON + timedelta(minutes=40))
+    assert [s.end for s in samples] == [K_NOON + 600, K_NOON + 1200]
+    assert samples[1].ghi == 200.0
+    assert rejected == 5
+
+
+def test_recent_values_list_is_bounded_and_typed():
+    assert L.parse_station_list(None, NOON) == ([], 0)
+    assert L.parse_station_list({"a": 1}, NOON) == ([], 1)
+    too_long = [_rec(10)] * (L.RECENT_MAX_ENTRIES + 1)
+    assert L.parse_station_list(too_long, NOON) == ([], L.RECENT_MAX_ENTRIES + 1)
+    assert len(L.parse_station_list([_rec(10)] * L.RECENT_MAX_ENTRIES, NOON + timedelta(hours=1))[0]) == 100
+
+
+def test_a_record_is_replaced_only_by_one_at_least_as_complete():
+    data = L.LearningData()
+    full = L.StationSample(K_NOON + 600, 100.0, 50.0, 10.0, 300.0, 20.0, 10.0)
+    partial = L.StationSample(K_NOON + 600, 120.0, None, None, 300.0, 20.0, 10.0)
+    assert data.add_station_sample(full)
+    assert not data.add_station_sample(partial)  # less complete: kept
+    assert data.d["station_samples"][K_NOON + 600][0] == 100.0
+    corrected = L.StationSample(K_NOON + 600, 101.0, 50.0, 10.0, 300.0, 20.0, 10.0)
+    assert data.add_station_sample(corrected)  # same completeness: newer wins
+    assert data.d["station_samples"][K_NOON + 600][0] == 101.0
+    assert not data.add_station_sample(corrected)
