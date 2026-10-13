@@ -1,4 +1,4 @@
-"""Mutation record for 0.1.33.2 — "if I break it, does a test fail?"
+"""Mutation record (since 0.1.33.2; 0.1.34: M109 ff. for learning) — "if I break it, does a test fail?"
 
 Each mutation is a plausible implementation mistake, applied textually to a
 pristine copy of the repository, followed by a full test run. A mutation is
@@ -29,6 +29,11 @@ INIT_PY = PKG + "__init__.py"
 SHD = PKG + "shading.py"
 SHP = PKG + "shading_provider.py"
 FLOW = PKG + "config_flow.py"
+# 0.1.34: learning
+LRN = PKG + "learning.py"
+HUB = PKG + "learning_hub.py"
+ENT = PKG + "learning_entities.py"
+REC = PKG + "recorder.py"
 
 # (id, description, file, original, mutated)
 MUTATIONS = [
@@ -212,7 +217,8 @@ MUTATIONS = [
      '    if value != value or value in (float("inf"), float("-inf")):\n        raise',
      '    if False:\n        raise'),
     ("M73", "OMSF-019: 15-minute series recorded", PKG + "recorder.py",
-     "    return {ATTR_WATTS, ATTR_WH_PERIOD, ATTR_WH_PERIOD_15M}", "    return {ATTR_WATTS, ATTR_WH_PERIOD}"),
+     "    return {ATTR_WATTS, ATTR_WH_PERIOD, ATTR_WH_PERIOD_15M, ATTR_LEARNING_HOURS}",
+     "    return {ATTR_WATTS, ATTR_WH_PERIOD, ATTR_LEARNING_HOURS}"),  # 0.1.34: line extended
     # ---- 0.1.33.5: partial shading -------------------------------------
     ("M74", "blocked share inverted (k instead of 1-k), averages", SHD,
      "blocked = dni * np.where(up, caoi * (1 - k), 0).mean(axis=1)",
@@ -300,16 +306,265 @@ MUTATIONS = [
      "section[:, members, :].reshape(section.shape[0], -1)", "section.reshape(section.shape[0], -1)"),
     ("M108", "unshaded not snapped to exactly 1 (parity noise)", SHD,
      "    k = np.where(k > 1 - 1e-9, 1.0, k)  # unshaded must be exactly unshaded\n", ""),
+    # 0.1.34: learning (M109 ff.)
+    ("M109", 'lead time of the running hour not clamped to 0', LRN,
+     '    lead = max(lead_hours, 0.0)',
+     '    lead = lead_hours'),
+    ("M110", 'lead bucket upper edge inclusive', LRN,
+     '        if low <= lead < high:',
+     '        if low <= lead <= high:'),
+    ("M111", 'hour layers from the start instant only', LRN,
+     '    ends = [instants.get(key), instants.get(key + HOUR_S)]',
+     '    ends = [instants.get(key)]'),
+    ("M112", 'missing cloud layer read as 0 % (Fusion: missing = no forecast)', LRN,
+     '        layers.append(value if value is not None and 0.0 <= value <= 100.0 else None)',
+     '        layers.append(value if value is not None and 0.0 <= value <= 100.0 else 0.0)'),
+    ("M113", 'dew point above temperature accepted', LRN,
+     '        if dew is not None and temp is not None and dew > temp + 0.5:',
+     '        if False:'),
+    ("M114", 'station values clamped instead of rejected', LRN,
+     '        parsed[name] = number if number is not None and low <= number <= high else None',
+     '        parsed[name] = None if number is None else min(max(number, low), high)'),
+    ("M115", 'station hour with 4 of 6 values accepted', LRN,
+     'STATION_MIN_VALUES = 5',
+     'STATION_MIN_VALUES = 4'),
+    ("M116", 'station hour built from start-labelled samples', LRN,
+     '    present = [samples.get(key + 600 * i) for i in range(1, STATION_SAMPLES_PER_HOUR + 1)]',
+     '    present = [samples.get(key + 600 * i) for i in range(0, STATION_SAMPLES_PER_HOUR)]'),
+    ("M117", 'sample ending at :00 assigned to the next hour', LRN,
+     'k - k % HOUR_S - (HOUR_S if k % HOUR_S == 0 else 0)',
+     'k - k % HOUR_S'),
+    ("M118", 'complete station hour replaced by a less complete one', LRN,
+     '                if previous is None or aggregated[H["n"]] >= previous[H["n"]]:',
+     '                if True:'),
+    ("M119", 'stale station state accepted', HUB,
+     '    if now is not None and now - end > STATION_STALE:',
+     '    if False:'),
+    ("M120", 'predictors for low sun', LRN,
+     '        if elevation < MIN_ELEVATION_DEG or e0h <= 0:\n            continue\n        low, mid',
+     '        if e0h <= 0:\n            continue\n        low, mid'),
+    ("M121", 'hour without all weather fields used', LRN,
+     '        if low is None or mid is None or high is None or temp is None or dew is None:\n            continue\n',
+     ''),
+    ("M122", 'elapsed hour archived as a forecast', LRN,
+     '            if key + HOUR_S <= now_ts:\n                continue  # an elapsed hour',
+     '            if False:\n                continue  # an elapsed hour'),
+    ("M123", 'oldest instead of latest row used for an hour', LRN,
+     '                out[key] = max(buckets.values(), key=lambda row: row[R["issued"]])',
+     '                out[key] = min(buckets.values(), key=lambda row: row[R["issued"]])'),
+    ("M124", 'look-ahead: rows issued after the cutoff used', LRN,
+     '            if row[R["issued"]] >= cutoff:\n                continue',
+     '            if False:\n                continue'),
+    ("M125", 'look-ahead: day decided at the cutoff used', LRN,
+     '        and data.reset_floor(cutoff, scope) <= item["decided"] < cutoff',
+     '        and data.reset_floor(cutoff, scope) <= item["decided"] <= cutoff'),
+    ("M126", 'excluded days used as evidence', LRN,
+     '        and item["status"] == DAY_OK\n        and data.reset_floor',
+     '        and item["status"] is not None\n        and data.reset_floor'),
+    ("M127", 'freeze ignored', LRN,
+     '            if start <= ts and (end is None or ts < end):\n                return start',
+     '            if False:\n                return start'),
+    ("M128", 'owner reset ignored', LRN,
+     '                floor = max(floor, reset_ts)',
+     '                floor = floor'),
+    ("M129", 'low cloud has (almost) no weight in the distance', LRN,
+     'PREDICTOR_SCALES = np.array([0.10, 10.0, 25.0, 30.0, 2.0])',
+     'PREDICTOR_SCALES = np.array([0.10, 10.0, 2500.0, 30.0, 2.0])'),
+    ("M130", 'distance limit not applied', LRN,
+     '    within = dist <= MAX_DISTANCE',
+     '    within = dist >= 0'),
+    ("M131", 'neighbour count not limited', LRN,
+     '    order = np.lexsort((ev.buckets[idx], ev.hours[idx], dist))[:K_NEIGHBOURS]',
+     '    order = np.lexsort((ev.buckets[idx], ev.hours[idx], dist))'),
+    ("M132", 'tie order reversed (non-reproducible selection)', LRN,
+     '    order = np.lexsort((ev.buckets[idx], ev.hours[idx], dist))[:K_NEIGHBOURS]',
+     '    order = np.lexsort((ev.buckets[idx], -ev.hours[idx], dist))[:K_NEIGHBOURS]'),
+    ("M133", 'minimum analog count ignored', LRN,
+     '    if n < MIN_ANALOGS:\n        return Correction(analogs=n, pooled=pooled)',
+     '    if n < 1:\n        return Correction(analogs=n, pooled=pooled)'),
+    ("M134", 'no shrinkage towards neutral', LRN,
+     '    shrink = n_eff / (n_eff + SHRINK_N0)',
+     '    shrink = 1.0'),
+    ("M135", 'weights ignore the distance', LRN,
+     '    weight = (1.0 / (dist + DISTANCE_EPS)) * recency_weight(',
+     '    weight = (1.0 + 0 * dist) * recency_weight('),
+    ("M136", 'recency ignored', LRN,
+     '    weight = np.power(0.5, age_days / RECENCY_HALF_LIFE_DAYS)',
+     '    weight = np.ones_like(age_days)'),
+    ("M137", 'season floor ignored', LRN,
+     '    return np.where(season, np.maximum(weight, SEASON_FLOOR), weight)',
+     '    return weight'),
+    ("M138", 'neighbouring buckets never pooled', LRN,
+     '    return _analog(ev, neighbours, vector, pred.key, pooled=True)',
+     '    return result'),
+    ("M139", 'kt shift not bounded', LRN,
+     '        shift_kt=_clamp(shrink * mean_kt, -MAX_SHIFT_KT, MAX_SHIFT_KT),',
+     '        shift_kt=shrink * mean_kt,'),
+    ("M140", 'forecast error sign flipped', LRN,
+     '            ekt.append(kt_m - row[R["kt"]])',
+     '            ekt.append(row[R["kt"]] - kt_m)'),
+    ("M141", 'kd shift ignored', LRN,
+     '    kd_c = _clamp(kd + shift_kd, KD_MIN, 1.0) if shift_kd != 0.0 else kd',
+     '    kd_c = kd'),
+    ("M142", 'parity: unchanged hours rebuilt', LRN,
+     '        if shift[0] == 0.0 and shift[1] == 0.0 and factor == 1.0:\n            out[start] = record',
+     '        if False:\n            out[start] = record'),
+    ("M143", 'corrections applied below 5 deg sun', LRN,
+     '        if elevation < MIN_ELEVATION_DEG or e0h <= 0:\n            out[start] = record',
+     '        if e0h <= 0:\n            out[start] = record'),
+    ("M144", 'stage-2 bin from the uncorrected kt', LRN,
+     '        factor = stage2_factor_for(stage2, kt_shifted)',
+     '        factor = stage2_factor_for(stage2, kt)'),
+    ("M145", 'stage-2 factor not shrunk', LRN,
+     '        factor = 1.0 + (ratio - 1.0) * n / (n + STAGE2_N0)',
+     '        factor = ratio'),
+    ("M146", 'stage-2 factor not bounded when learned', LRN,
+     '            "factor": round(_clamp(factor, STAGE2_MIN, STAGE2_MAX), 4),',
+     '            "factor": round(factor, 4),'),
+    ("M147", 'stage-2 learns from excluded days', LRN,
+     '            day_ok[day] = usable_day(data, day, cutoff, "stage2")',
+     '            day_ok[day] = True'),
+    ("M148", 'stage-2 factor not bounded when applied', LRN,
+     '    return float(_clamp(float(item.get("factor", 1.0)), STAGE2_MIN, STAGE2_MAX))',
+     '    return float(item.get("factor", 1.0))'),
+    ("M149", 'snow days not excluded', LRN,
+     '        if refl is not None and ghi > SNOW_MIN_GHI and refl / ghi > SNOW_ALBEDO:',
+     '        if False:'),
+    ("M150", 'day ratio band not checked', LRN,
+     '        if not DAY_RATIO_MIN <= ratio <= DAY_RATIO_MAX:',
+     '        if False:'),
+    ("M151", 'production counter faults accepted', LRN,
+     '        if any(v < 0 or v > limit for v in values):',
+     '        if False:'),
+    ("M152", 'missing production decided at once', LRN,
+     '        if any(v is None for v in values):\n            if may_wait:\n                return None, details',
+     '        if any(v is None for v in values):\n            if False:\n                return None, details'),
+    ("M153", 'station completeness not required', LRN,
+     '    if not daylight or len(complete) < DAY_STATION_COMPLETENESS * len(daylight):',
+     '    if not daylight:'),
+    ("M154", 'gate after 7 days', LRN,
+     'GATE_MIN_DAYS = 14',
+     'GATE_MIN_DAYS = 7'),
+    ("M155", 'gate improvement threshold ignored', LRN,
+     '    irr_ok = days_irr >= GATE_MIN_DAYS and improvement is not None and improvement >= GATE_MIN_IMPROVEMENT',
+     '    irr_ok = days_irr >= GATE_MIN_DAYS and improvement is not None'),
+    ("M156", 'gate energy check ignored', LRN,
+     '        "passed": bool(irr_ok and energy_ok),',
+     '        "passed": bool(irr_ok),'),
+    ("M157", 'gate uses excluded days', LRN,
+     '        if decision is None or decision["status"] != DAY_OK:\n            continue\n        issue = ',
+     '        if decision is None:\n            continue\n        issue = '),
+    ("M158", 'sunrise forecast captured before 06:00', LRN,
+     '    if local_now.hour < SUNRISE_ISSUE_HOUR:\n        return False\n    day = local_now.date().isoformat()\n    if day in data.d["issue6"]',
+     '    if False:\n        return False\n    day = local_now.date().isoformat()\n    if day in data.d["issue6"]'),
+    ("M159", 'sunrise forecast overwritten later', LRN,
+     '    if day in data.d["issue6"]:\n        return False',
+     '    if False:\n        return False'),
+    ("M160", "applied without the owner's switch", LRN,
+     '        if apply_switch:\n            return STATE_APPLIED',
+     '        if True:\n            return STATE_APPLIED'),
+    ("M161", 'station representativeness ignored', LRN,
+     '    if not representative:\n        return STATE_PAUSED',
+     '    if False:\n        return STATE_PAUSED'),
+    ("M162", 'no pause after a failed gate', LRN,
+     '    if ever_passed:\n        return STATE_PAUSED',
+     '    if False:\n        return STATE_PAUSED'),
+    ("M163", 'algorithm version of the gate not checked', LRN,
+     '    if gate is None or gate.get("algorithm") != ALGORITHM_VERSION:',
+     '    if gate is None:'),
+    ("M164", 'malformed archive row accepted', LRN,
+     '                archive[k][index] = _finite_list(row, len(ROW_FIELDS), "archive row", allow_none=False)',
+     '                archive[k][index] = row'),
+    ("M165", 'stored stage-2 factor not validated', LRN,
+     '                    isinstance(factor, (int, float)) and STAGE2_MIN <= factor <= STAGE2_MAX,',
+     '                    isinstance(factor, (int, float)),'),
+    ("M166", 'archive never purged', LRN,
+     '        for name in ("station_hours", "archive"):',
+     '        for name in ("station_hours",):'),
+    ("M167", 'evidence age limit removed', LRN,
+     '        if key < oldest:\n            continue\n        meas = station.get(key)',
+     '        if False:\n            continue\n        meas = station.get(key)'),
+    ("M168", 'predictors not rounded (stored differs from used)', LRN,
+     '        values = [round(v, PRECISION) for v in (kt, kd, low, mid, high, temp, dew, elevation, e0h)]',
+     '        values = [v for v in (kt, kd, low, mid, high, temp, dew, elevation, e0h)]'),
+    ("M169", 'event log unbounded', LRN,
+     '        if len(self.d["events"]) > EVENT_LOG_MAX:',
+     '        if False:'),
+    ("M170", 'corrected forecast served while not applied', COORD,
+     '        if applies:\n            self.last_local_stats = corr_stats\n            return estimate_corr',
+     '        if True:\n            self.last_local_stats = corr_stats\n            return estimate_corr'),
+    ("M171", 'learning failure not caught by the coordinator', COORD,
+     '        except Exception as err:  # noqa: BLE001 - fail-safe: raw forecast\n            LOGGER.warning("Learning: corrected',
+     '        except ZeroDivisionError as err:  # noqa: BLE001 - fail-safe: raw forecast\n            LOGGER.warning("Learning: corrected'),
+    ("M172", 'learning not time-bounded', COORD,
+     '            async with asyncio.timeout(LEARNING_TIMEOUT_SECONDS):',
+     '            async with asyncio.timeout(None):'),
+    ("M173", 'hub correction failure not caught', HUB,
+     '        except Exception as err:  # noqa: BLE001 - fail-safe: raw forecast\n            LOGGER.warning("Learning correction failed',
+     '        except ZeroDivisionError as err:  # noqa: BLE001 - fail-safe: raw forecast\n            LOGGER.warning("Learning correction failed'),
+    ("M174", 'hub applies in state eligible', HUB,
+     '        return self.state == L.STATE_APPLIED',
+     '        return self.state in (L.STATE_APPLIED, L.STATE_ELIGIBLE)'),
+    ("M175", 'members not refreshed when the state changes', HUB,
+     '        if refresh and before_applies != (state == L.STATE_APPLIED):\n            self._refresh_members()',
+     '        if False:\n            self._refresh_members()'),
+    ("M176", 'incomplete day totals recorded for the gate', HUB,
+     '            if complete_days is not None and day not in complete_days:\n                return None',
+     '            if False:\n                return None'),
+    ("M177", 'configuration problem does not pause', HUB,
+     '        if self.config_problem:\n            state, reason = L.STATE_PAUSED',
+     '        if False:\n            state, reason = L.STATE_PAUSED'),
+    ("M178", 'corrupt store not quarantined', HUB,
+     '        except L.LearningDataError as err:\n            await self._async_quarantine(now, f"malformed:',
+     '        except ZeroDivisionError as err:\n            await self._async_quarantine(now, f"malformed:'),
+    ("M179", 'station listener not subscribed', HUB,
+     'async_track_state_change_event(self.hass, [self.station_entity], self._on_station_event)',
+     'async_track_state_change_event(self.hass, [], self._on_station_event)'),
+    ("M180", 'days before the store existed decided', HUB,
+     '        first = max(created.astimezone(self.tz).date(), today - timedelta(days=DECIDE_LOOKBACK_DAYS))',
+     '        first = today - timedelta(days=DECIDE_LOOKBACK_DAYS)'),
+    ("M181", 'export retention deletes any *_NNNN.csv (D-7 regression)', HUB,
+     '    for prefix in YEARLY_EXPORTS:\n        for path in base.glob(f"{prefix}_*.csv"):\n            year = path.stem[len(prefix) + 1:]\n            if year.isdigit() and len(year) == 4 and int(year) < oldest_year:\n                path.unlink()',
+     '    for path in base.glob("*_*.csv"):\n        year = path.stem.rsplit("_", 1)[-1]\n        if year.isdigit() and len(year) == 4 and int(year) < oldest_year:\n            path.unlink()'),
+    ("M182", 'member entries not required to be local', HUB,
+     '    if entry.options.get(CONF_WEATHER_SOURCE) not in LOCAL_BASED_SOURCES:',
+     '    if False:'),
+    ("M183", 'frozen learning still updates stage 2', HUB,
+     '            if not self.data.frozen:\n                await self._step(report, "stage2"',
+     '            if True:\n                await self._step(report, "stage2"'),
+    ("M184", 'reset without confirmation', INIT_PY,
+     '        vol.Required("confirm"): vol.All(cv.boolean, vol.IsTrue("confirm must be true")),',
+     '        vol.Required("confirm"): cv.boolean,'),
+    ("M185", 'location service counts the hub as an array entry', INIT_PY,
+     '            if entry.state is ConfigEntryState.LOADED and not is_hub_entry(entry)',
+     '            if entry.state is ConfigEntryState.LOADED'),
+    ("M186", 'hub removal deletes the learning store', INIT_PY,
+     '    if is_hub_entry(entry):\n        return\n',
+     '    if is_hub_entry(entry):\n        await Store(hass, 1, "open_meteo_solar_forecast.learning").async_remove()\n        return\n'),
+    ("M187", 'member may be in two groups', FLOW,
+     '            if member in taken:\n                problem = "member_twice"',
+     '            if False:\n                problem = "member_twice"'),
+    ("M188", 'energy counter not validated', FLOW,
+     '    if error := validate_energy_entity(hass, group.get(CONF_GROUP_ENERGY_ENTITY)):',
+     '    if error := None:'),
+    ("M189", 'hub menu offered although a hub exists', FLOW,
+     '        if user_input is None and _array_entries(self.hass) and not _hub_exists(self.hass):',
+     '        if user_input is None and _array_entries(self.hass):'),
+    ("M190", 'explanation list recorded in the database', REC,
+     'ATTR_WH_PERIOD_15M, ATTR_LEARNING_HOURS}',
+     'ATTR_WH_PERIOD_15M}'),
 ]
 
 
-def run(root: Path, only: str | None, start: str | None = None) -> list[dict]:
+def run(root: Path, only: str | None, start: str | None = None, stop: str | None = None) -> list[dict]:
     results = []
     python = sys.executable
     for mid, desc, rel, original, mutated in MUTATIONS:
         if only and mid != only:
             continue
         if start and int(mid[1:]) < int(start[1:]):
+            continue
+        if stop and int(mid[1:]) > int(stop[1:]):
             continue
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp) / "repo"
@@ -324,7 +579,19 @@ def run(root: Path, only: str | None, start: str | None = None) -> list[dict]:
             target.write_text(text.replace(original, mutated))
             # Shading tests first (0.1.33.5): a caught mutation stops early;
             # pytest de-duplicates the files listed again via "tests".
-            first = sorted(str(p.relative_to(work)) for p in (work / "tests").glob("test_shading_*.py"))
+            # The tests closest to the mutated file run first (a caught
+            # mutation stops at the first failure); then everything.
+            if rel in (LRN, HUB, ENT, REC):
+                patterns = ("test_learning_*.py",)
+            elif rel in (SHD, SHP):
+                patterns = ("test_shading_*.py",)
+            else:
+                patterns = ("test_local_*.py", "test_hybrid*.py", "test_v0_1_33_4_*.py", "test_learning_hub.py")
+            first = sorted(
+                str(p.relative_to(work))
+                for pattern in patterns
+                for p in (work / "tests").glob(pattern)
+            )
             proc = subprocess.run(
                 [python, "-m", "pytest", "-q", "-x", "-W", "ignore", "-p", "no:randomly", *first, "tests"],
                 cwd=work, capture_output=True, text=True, timeout=900,
@@ -344,10 +611,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--only")
     parser.add_argument("--from", dest="start", help="run mutations from this id on (e.g. M74)")
+    parser.add_argument("--to", dest="stop", help="run mutations up to this id (e.g. M108)")
     parser.add_argument("--out", default="mutation_results.json")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
-    results = run(root, args.only, args.start)
+    results = run(root, args.only, args.start, args.stop)
     Path(args.out).write_text(json.dumps(results, indent=2))
     escaped = [r for r in results if r["status"] != "CAUGHT"]
     print(f"{len(results) - len(escaped)}/{len(results)} caught")

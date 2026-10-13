@@ -1,0 +1,102 @@
+# Example dashboard for the learning hub (0.1.34). Core cards only.
+# Use: Settings > Dashboards > Add dashboard > (new) > Edit > Raw configuration
+# editor, paste this file. Entity ids assume the groups are named "10K" and
+# "5K"; the production and station entities are the owner's (Huawei inverters,
+# SwissWeather Fusion 0.3.4) - replace them with yours.
+title: Solar forecast learning
+views:
+  - title: Learning
+    path: learning
+    cards:
+      - type: entities
+        title: State and control
+        entities:
+          - entity: sensor.solar_forecast_learning_state
+          - entity: switch.solar_forecast_learning_apply_learning
+          - entity: switch.solar_forecast_learning_freeze_learning
+          - entity: sensor.solar_forecast_learning_irradiance_improvement
+            name: Irradiance improvement (gate needs 5 %)
+          - entity: sensor.solar_forecast_learning_evidence
+          - entity: sensor.solar_forecast_learning_last_run
+          - type: attribute
+            entity: sensor.solar_forecast_learning_state
+            attribute: reason
+            name: Why
+
+      - type: markdown
+        title: Next hours - what the learner changes and why
+        content: |
+          {% set hours = state_attr('sensor.solar_forecast_learning_next_hours', 'hours') or [] %}
+          {% set applied = state_attr('sensor.solar_forecast_learning_next_hours', 'applied') %}
+          **{{ 'Applied to the forecast' if applied else 'Shadow only - the forecast is unchanged' }}**
+
+          | Hour | Lead | GHI | corrected | low cloud | spread | similar hours | shrink |
+          |---|---|---|---|---|---|---|---|
+          {% for h in hours if h.elevation >= 10 -%}
+          | {{ h.hour[11:16] }} | {{ h.lead }} | {{ h.ghi_w_m2 }} | {{ h.ghi_corrected_w_m2 }} | {{ h.low_cloud }} % | {{ h.spread_k }} K | {{ h.analogs }} | {{ h.shrink }} |
+          {% endfor %}
+
+      - type: entities
+        title: Effect on the forecast
+        entities:
+          - entity: sensor.solar_forecast_learning_10k_correction_today
+          - entity: sensor.solar_forecast_learning_10k_correction_tomorrow
+          - entity: sensor.solar_forecast_learning_5k_correction_today
+          - entity: sensor.solar_forecast_learning_5k_correction_tomorrow
+
+      - type: statistics-graph
+        title: Skill trend (daily)
+        period: day
+        chart_type: line
+        stat_types: [mean]
+        days_to_show: 90
+        entities:
+          - sensor.solar_forecast_learning_irradiance_improvement
+          - sensor.solar_forecast_learning_station_correlation
+
+      - type: statistics-graph
+        title: Daily energy error at 06:00 (corrected forecast)
+        period: day
+        chart_type: line
+        stat_types: [mean]
+        days_to_show: 90
+        entities:
+          - sensor.solar_forecast_learning_10k_energy_error
+          - sensor.solar_forecast_learning_5k_energy_error
+
+      - type: statistics-graph
+        title: Actual production per day
+        period: day
+        chart_type: bar
+        stat_types: [change]
+        days_to_show: 30
+        entities:
+          - sensor.inverter_total_dc_input_energy
+          - sensor.inverter_total_dc_input_energy_2
+
+      - type: history-graph
+        title: Station vs production today
+        hours_to_show: 24
+        entities:
+          - entity: sensor.swissweather_fusion_reference_station_global_radiation
+            name: Taenikon global radiation
+          - entity: sensor.inverter_input_power
+            name: 10K DC power
+          - entity: sensor.inverter_input_power_2
+            name: 5K DC power
+
+      - type: entities
+        title: Calibration (stage 2) and station checks
+        entities:
+          - entity: sensor.solar_forecast_learning_10k_calibration
+          - type: attribute
+            entity: sensor.solar_forecast_learning_10k_calibration
+            attribute: suggested_efficiency_change_percent
+            name: 10K suggested efficiency change (%)
+          - entity: sensor.solar_forecast_learning_5k_calibration
+          - type: attribute
+            entity: sensor.solar_forecast_learning_5k_calibration
+            attribute: suggested_efficiency_change_percent
+            name: 5K suggested efficiency change (%)
+          - entity: sensor.solar_forecast_learning_station_correlation
+          - entity: sensor.solar_forecast_learning_station_albedo

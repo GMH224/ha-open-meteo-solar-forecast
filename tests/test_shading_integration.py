@@ -173,7 +173,7 @@ async def test_open_meteo_mode_shading_reduces_only_shaded_hours(hass, zurich, f
 
 async def test_geometry_file_for_the_south_array(hass, zurich, freezer):
     freezer.move_to(NOW)
-    options = {**BASE_OPTIONS, "azimuth": 197, "declination": 45}
+    options = {**BASE_OPTIONS, "azimuth": 197, "declination": 40}  # 0.1.34: 40 deg refit
     plain = await setup_om(hass, options)
     reference = dict(hourly(plain, hass))
     shaded = await setup_om(hass, {**options, CONF_SHADING_FILEPATH: str(SOUTH_GEOMETRY)})

@@ -32,15 +32,47 @@ def _k(table, az, el, month=6):
     return float(table.factor(np.array(month), np.array(az), np.array(el)))
 
 
+# 0.1.34: the shipped South geometry is the 40-degree refit (owner, 12 Oct
+# 2026: all roofs 40 deg). Its values at the same sun positions, computed by
+# this engine when the refit was accepted (regression pin; the independent
+# evidence is the fit against measured production, release audit 0.1.34).
+REFIT_40 = {
+    (96, 25): 0.00, (96, 33): 0.62, (96, 41): 0.85,
+    (108, 17): 0.00, (108, 25): 0.39, (108, 33): 0.85, (108, 41): 0.94,
+    (120, 17): 0.06, (120, 25): 0.69, (120, 33): 0.97, (120, 41): 0.97,
+    (132, 17): 0.32, (132, 25): 0.89, (132, 33): 1.00,
+    (84, 33): 0.25, (84, 41): 0.72, (72, 41): 0.40,
+}
+
+
 @pytest.fixture(scope="module")
 def south():
     path = EXAMPLES / "south_geometry.yaml"
     return load_shading_text(path.read_text(), str(path))
 
 
-def test_south_geometry_reproduces_the_fitted_analysis_model(south):
+@pytest.fixture(scope="module")
+def south_45():
+    path = EXAMPLES / "south_geometry_45deg.yaml"
+    return load_shading_text(path.read_text(), str(path))
+
+
+def test_south_geometry_45_reproduces_the_fitted_analysis_model(south_45):
     for (az, el), expected in ANALYSIS.items():
-        assert _k(south, az, el) == pytest.approx(expected, abs=0.07), (az, el)
+        assert _k(south_45, az, el) == pytest.approx(expected, abs=0.07), (az, el)
+
+
+def test_south_geometry_40_is_the_accepted_refit(south):
+    assert south.summary["array_tilt"] == 40.0
+    for (az, el), expected in REFIT_40.items():
+        assert _k(south, az, el) == pytest.approx(expected, abs=0.01), (az, el)
+
+
+def test_south_refit_40_stays_close_to_the_45_fit(south, south_45):
+    # Both fits explain the same measurements; they may differ at the shadow
+    # edges (different roof geometry) but not in substance.
+    for az, el in ANALYSIS:
+        assert abs(_k(south, az, el) - _k(south_45, az, el)) <= 0.25, (az, el)
 
 
 def test_south_geometry_is_unshaded_from_midday_on(south):

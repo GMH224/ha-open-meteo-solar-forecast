@@ -1,17 +1,20 @@
-# Geometry of the South array (GMH224 installation), version 1.
+# Geometry of the South array (GMH224 installation), version 2: roof pitch 40 deg.
 # Frame: metres, x = east, y = north, z = up. Origin = inner eave corner of
 # the L-shaped house, where both eaves meet (z = 0 at eave height).
-# Fitted on 2026-10-11 to Feb-Oct 2026 hourly production: tall wing width,
-# gap between array and valley and chimney position were adjusted until the
-# ray-traced losses matched the measured clear-day losses (see
-# omsf_v0.1.33.5_release_audit.md, section "South geometry").
+# Version 1 (0.1.33.5) was fitted on 2026-10-11 for 45 deg roofs. Refitted
+# on 2026-10-12 for 40 deg (owner: all three roofs have the same pitch,
+# image analysis 40 deg) to the same Feb-Oct 2026 hourly production: tall
+# wing width, gap between array and valley and chimney position adjusted
+# until the ray-traced losses matched the measured clear-day losses
+# (weighted RMSE 0.148 at 40 deg vs 0.143 at 45 deg, 0.200 without shading;
+# see omsf_v0.1.34_release_audit.md).
 version: 1
 electrical_model: bypass          # bypass (default) or area
 
 array:
   azimuth: 197                    # compass, the direction the panels face
-  tilt: 45
-  origin: [-5.818, 2.038, 0.247]  # lower-left corner of the module field, seen from the front
+  tilt: 40
+  origin: [-5.334, 1.911, 0.225]  # lower-left corner of the module field, seen from the front
   rows: 5                         # row 1 = bottom
   columns: 3                      # column 1 = left
   module_width: 1.72              # along a row (landscape modules)
@@ -24,19 +27,19 @@ array:
 obstacles:
   - type: gable_building          # the tall north-south wing east of the array
     name: tall wing
-    center: [5.497, 0.192]        # centre of its footprint
+    center: [6.496, 0.227]        # centre of its footprint
     ridge_azimuth: 358
     length: 18
-    width: 11
+    width: 13                     # 40 deg roof: ridge 5.45 m above the shared eave
     eave_height: 0
-    ridge_height: 5.5
+    ridge_height: 5.454
     bottom: -6
 
   - type: box
     name: chimney
-    center: [2.114, 3.494]
+    center: [2.211, 3.81]
     width: 0.7
     depth: 0.7
     azimuth: 107                  # direction of the width axis (along the eave)
     bottom: 0
-    top: 5.9
+    top: 5.54

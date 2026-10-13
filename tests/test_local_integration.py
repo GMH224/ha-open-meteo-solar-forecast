@@ -167,7 +167,7 @@ NETWORK = "open_meteo_solar_forecast.OpenMeteoSolarForecast._request"
 
 
 def _coordinator(hass, entry):
-    return hass.data[DOMAIN][entry.entry_id]
+    return entry.runtime_data  # 0.1.34: owned by the entry
 
 
 # ---------------------------------------------------------------------------

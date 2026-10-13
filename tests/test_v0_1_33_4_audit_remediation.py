@@ -515,7 +515,8 @@ async def test_omsf018_no_secret_reaches_the_source_sensor_or_diagnostics(hass, 
 def test_omsf019_all_large_series_are_excluded_from_the_recorder():
     from custom_components.open_meteo_solar_forecast.recorder import exclude_attributes
 
-    assert exclude_attributes(None) == {"watts", "wh_period", "wh_period_15m"}
+    # 0.1.34: plus the learning hub's per-hour explanation list ("hours").
+    assert exclude_attributes(None) == {"watts", "wh_period", "wh_period_15m", "hours"}
 
 
 # ---------------------------------------------------------------------------
