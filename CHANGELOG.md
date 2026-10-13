@@ -1,5 +1,24 @@
 # Changelog — GMH224 fork
 
+## 0.1.34.1 — 2026-10-13 — every station record (Fusion 0.3.5)
+
+Release audit: `omsf_v0.1.34.1_release_audit.md`.
+
+### Fixed
+- **No station hour was ever complete on the live system** (13 Oct: 10 of
+  19 ten-minute records reached the sensor state; MeteoSwiss publishes with
+  a varying delay, so polling the latest value skips records). The hub now
+  reads Fusion's new `recent_values` attribute (>= 0.3.5: every record of
+  the last 6 hours) on every update, in the hourly run and in the startup
+  backfill from the recorder history. The strict 5-of-6 rule is unchanged.
+  A record is replaced only by one at least as complete.
+- The state sensor's `since` was empty after a fresh start.
+- The startup backfill's outcome was overwritten by the hourly report; it is
+  now kept (`last_run` attribute `startup`, diagnostics `last_startup`).
+
+### Unchanged
+- With Fusion < 0.3.5 (no `recent_values`) everything behaves as in 0.1.34.
+
 ## 0.1.34 — 2026-10-13 — learning hub (self-learning weather correction)
 
 Design record: `OMSF_v0_1_34_Learning_Spec.md` (confirmed by the owner on

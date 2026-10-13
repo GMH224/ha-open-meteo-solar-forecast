@@ -1,6 +1,6 @@
 # Developer notes — GMH224 fork of ha-open-meteo-solar-forecast
 
-Applies from v0.1.33.2 (updated for 0.1.34). Architecture and rationale:
+Applies from v0.1.33.2 (updated for 0.1.34 / 0.1.34.1). Architecture and rationale:
 [`OMSF_v0_1_33_2_Architecture_ICS.md`](OMSF_v0_1_33_2_Architecture_ICS.md).
 
 ## Module map

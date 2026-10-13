@@ -103,6 +103,12 @@ STATION_MIN_VALUES = 5
 STATION_SAMPLE_KEEP_S = 72 * HOUR_S
 STATION_MAX_AGE_S = 60 * 60
 """A station state older than this is ignored (Fusion marks it unknown)."""
+RECENT_MAX_ENTRIES = 100
+"""0.1.34.1: Fusion >= 0.3.5 publishes up to 36 records in `recent_values`;
+a longer list is rejected as a whole (not truncated)."""
+RECENT_WINDOW_S = 7 * 3600
+"""Records of `recent_values` older than this (relative to the reference
+time) or more than 15 minutes in its future are ignored."""
 
 STATION_RANGES: dict[str, tuple[str, float, float]] = {
     # field: (MeteoSwiss short name, min, max)
@@ -377,6 +383,38 @@ def parse_station_values(values: Any, end: datetime | None) -> StationSample | N
     if parsed["dhi"] is not None and parsed["dhi"] > parsed["ghi"] + 5.0:
         parsed["dhi"] = None
     return StationSample(end=rounded, **parsed)
+
+
+def parse_station_list(raw: Any, reference: datetime) -> tuple[list[StationSample], int]:
+    """Validate Fusion's `recent_values` (>= 0.3.5): a list of
+    ``{"time": <end of the 10-min interval>, "values": {...}}``.
+
+    Returns (samples, rejected). Each record is validated exactly like the
+    latest value; nothing is filled. A non-list or a list longer than
+    RECENT_MAX_ENTRIES yields nothing. Records outside
+    [reference - 7 h, reference + 15 min] are rejected individually.
+    """
+    if raw is None:
+        return [], 0
+    if not isinstance(raw, list) or len(raw) > RECENT_MAX_ENTRIES:
+        return [], len(raw) if isinstance(raw, list) else 1
+    ref = int(reference.astimezone(timezone.utc).timestamp())
+    samples: list[StationSample] = []
+    rejected = 0
+    for item in raw:
+        if not isinstance(item, Mapping):
+            rejected += 1
+            continue
+        end = parse_utc(item.get("time"))
+        if end is None or not ref - RECENT_WINDOW_S <= end.timestamp() <= ref + 900:
+            rejected += 1
+            continue
+        sample = parse_station_values(item.get("values"), end)
+        if sample is None:
+            rejected += 1
+            continue
+        samples.append(sample)
+    return samples, rejected
 
 
 def station_hour(samples: Mapping[int, list[float | None]], key: int) -> list[float | None] | None:
@@ -733,10 +771,18 @@ class LearningData:
     # -- ingestion ----------------------------------------------------------
 
     def add_station_sample(self, sample: StationSample) -> bool:
+        """Merge one record. An existing record is replaced only by one
+        that is at least as complete (0.1.34.1: the same record arrives both
+        as the latest value and in `recent_values`)."""
         samples = self.d["station_samples"]
-        if sample.end in samples and samples[sample.end] == sample.as_list():
-            return False
-        samples[sample.end] = sample.as_list()
+        new = sample.as_list()
+        old = samples.get(sample.end)
+        if old is not None:
+            if old == new:
+                return False
+            if sum(v is not None for v in new) < sum(v is not None for v in old):
+                return False
+        samples[sample.end] = new
         return True
 
     def finalize_station_hours(self, now: datetime) -> int:

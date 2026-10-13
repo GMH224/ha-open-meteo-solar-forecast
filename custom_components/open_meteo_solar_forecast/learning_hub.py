@@ -255,6 +255,7 @@ class LearningHub:
         self.entry_reports: dict[str, EntryReport] = {}
         self.last_hourly: dict[str, Any] = {}
         self.last_nightly: dict[str, Any] = {}
+        self.last_startup: dict[str, Any] = {}
         self.store_size: int | None = None
 
     # -- lifecycle -----------------------------------------------------------
@@ -267,7 +268,8 @@ class LearningHub:
             self.data.d["created"] = now.isoformat()
             self.data.event(now, "created", "learning store created (neutral start)")
         self._recompute_state(now, refresh=False)
-        self.data.d["state"].setdefault("since", now.isoformat())
+        if not self.data.d["state"].get("since"):
+            self.data.d["state"]["since"] = now.isoformat()
         if self.station_entity:
             self._unsubs.append(
                 async_track_state_change_event(self.hass, [self.station_entity], self._on_station_event)
@@ -311,8 +313,10 @@ class LearningHub:
         older than 20 h)."""
         now = dt_util.utcnow()
         first = not self.data.d["station_hours"]
-        await self._step(self.last_hourly, "station_backfill", self._async_backfill_station(
+        report: dict[str, Any] = {"started": now.isoformat()}
+        await self._step(report, "station_backfill", self._async_backfill_station(
             now, STATION_BACKFILL_FIRST if first else STATION_BACKFILL_RESTART))
+        self.last_startup = report  # kept apart: the hourly run replaces its own report
         await self.async_run_hourly(now)
         last = parse_utc(self.data.d.get("last_nightly"))
         if last is None or now - last > timedelta(hours=20):
@@ -545,16 +549,41 @@ class LearningHub:
         self._ingest_station(event.data.get("new_state"), dt_util.utcnow())
 
     def _ingest_station(self, state: State | None, now: datetime | None) -> bool:
-        sample, note = station_sample_from_state(state, now)
-        self.station_status = {
+        """The latest record (state + ``values``) and, from Fusion 0.3.5,
+        every record of the last hours (``recent_values``). ``now`` None:
+        replay from history (no staleness check; the list is judged
+        against the state's own update time)."""
+        added, sample, note, recent_total, recent_rejected = self._merge_station_state(state, now)
+        status: dict[str, Any] = {
             "entity_id": self.station_entity,
             "note": note,
             "last_sample_end": None if sample is None else L.key_to_dt(sample.end).isoformat(),
             "checked": (now or dt_util.utcnow()).isoformat(),
+            "recent_values": recent_total,
         }
-        if sample is None:
-            return False
-        return self.data.add_station_sample(sample)
+        if recent_rejected:
+            status["recent_values_rejected"] = recent_rejected
+        self.station_status = status
+        return added > 0
+
+    def _merge_station_state(
+        self, state: State | None, now: datetime | None
+    ) -> tuple[int, L.StationSample | None, str, int, int]:
+        """Merge the latest record and the ``recent_values`` list of one
+        state. Returns (records added or improved, latest sample, note,
+        list records accepted, list records rejected)."""
+        sample, note = station_sample_from_state(state, now)
+        added = 0
+        recent_total = recent_rejected = 0
+        if state is not None and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            reference = now or state.last_updated
+            recent, recent_rejected = L.parse_station_list(state.attributes.get("recent_values"), reference)
+            recent_total = len(recent)
+            for item in recent:
+                added += int(self.data.add_station_sample(item))
+        if sample is not None:
+            added += int(self.data.add_station_sample(sample))
+        return added, sample, note, recent_total, recent_rejected
 
     async def _async_backfill_station(self, now: datetime, span: timedelta) -> str:
         from homeassistant.components.recorder import get_instance, history
@@ -567,9 +596,7 @@ class LearningHub:
         )
         added = 0
         for state in states.get(self.station_entity, []):
-            sample, _ = station_sample_from_state(state, None)
-            if sample is not None and self.data.add_station_sample(sample):
-                added += 1
+            added += self._merge_station_state(state, None)[0]
         hours = self.data.finalize_station_hours(now)
         return f"{added} samples, {hours} hours"
 

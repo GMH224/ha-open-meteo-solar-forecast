@@ -107,6 +107,7 @@ def _hub_diagnostics(hub: Any, entry: ConfigEntry) -> dict[str, Any]:
         "representativeness": d["representativeness"],
         "last_hourly": hub.last_hourly,
         "last_nightly": hub.last_nightly,
+        "last_startup": hub.last_startup,
         "entry_reports": hub.entry_reports,
         "next_hours": hub.next_hours,
         "events": d["events"],

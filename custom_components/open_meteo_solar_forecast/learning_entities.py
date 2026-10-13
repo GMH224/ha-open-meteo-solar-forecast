@@ -219,7 +219,12 @@ def _last_run(hub: LearningHub, _group: str | None) -> datetime | None:
 
 
 def _last_run_attributes(hub: LearningHub, _group: str | None) -> dict[str, Any]:
-    return {"nightly": hub.last_nightly, "hourly": hub.last_hourly, "store_bytes": hub.store_size}
+    return {
+        "nightly": hub.last_nightly,
+        "hourly": hub.last_hourly,
+        "startup": hub.last_startup,
+        "store_bytes": hub.store_size,
+    }
 
 
 SENSORS: tuple[HubSensorDescription, ...] = (

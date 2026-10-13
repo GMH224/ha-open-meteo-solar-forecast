@@ -281,8 +281,10 @@ If the check later fails, it falls back to the raw forecast by itself.
 Any fault in the learner leaves the forecast raw; it never stops a forecast.
 
 **Requirements:** PV entries in *local* or *hybrid* mode with SwissWeather
-Fusion >= 0.3.4 (cloud layers in the hourly forecast, reference-station
-sensor), and an energy counter per inverter with long-term statistics.
+Fusion >= 0.3.5 (cloud layers in the hourly forecast, reference-station
+sensor with `recent_values`), and an energy counter per inverter with
+long-term statistics. With Fusion 0.3.4 the hub runs, but hardly any hour
+is complete (the station sensor alone skips records), so it cannot learn.
 
 **Setup:** *Settings > Devices & services > Add integration > Open-Meteo
 Solar Forecast* > **Set up the learning hub** (offered once a PV entry
