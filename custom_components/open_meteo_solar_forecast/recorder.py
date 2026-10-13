@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from homeassistant.core import HomeAssistant, callback
 
-from .const import ATTR_WATTS, ATTR_WH_PERIOD, ATTR_WH_PERIOD_15M
+from .const import ATTR_LEARNING_HOURS, ATTR_WATTS, ATTR_WH_PERIOD, ATTR_WH_PERIOD_15M
 
 
 @callback
 def exclude_attributes(hass: HomeAssistant) -> set[str]:
     """Exclude potentially large attributes from being recorded in the database."""
     # 0.1.33.4 (audit OMSF-019): the 15-minute series is excluded as well.
-    return {ATTR_WATTS, ATTR_WH_PERIOD, ATTR_WH_PERIOD_15M}
+    # 0.1.34: the learning hub's per-hour explanation list as well.
+    return {ATTR_WATTS, ATTR_WH_PERIOD, ATTR_WH_PERIOD_15M, ATTR_LEARNING_HOURS}

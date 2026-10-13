@@ -3,11 +3,83 @@
 **Feature:** local weather source — PV forecast from Home Assistant entities
 (SwissWeather Fusion ≥ 0.3.3) instead of the Open-Meteo API; from 0.1.33.3
 also a hybrid of both.
-**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3, 0.1.33.4), 11 October 2026 (0.1.33.5)
+**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3, 0.1.33.4), 11 October 2026 (0.1.33.5), 13 October 2026 (0.1.34)
 **Companion documents:**
 [`omsf_v0.1.33.2_release_audit.md`](omsf_v0.1.33.2_release_audit.md) (what changed, defects, safety analysis),
 [`omsf_v0_1_33_2_ICS_quality_bug_testing_report.md`](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) (tests, mutation record, gaps),
 [`DEVELOPER.md`](DEVELOPER.md) (module map, how to run tests).
+
+---
+
+## 0d. Update for 0.1.34 — learning hub
+
+Design record (algorithms, parameters, rationale):
+[`OMSF_v0_1_34_Learning_Spec.md`](OMSF_v0_1_34_Learning_Spec.md); companion
+documents [`omsf_v0.1.34_release_audit.md`](omsf_v0.1.34_release_audit.md),
+[`omsf_v0_1_34_ICS_quality_bug_testing_report.md`](omsf_v0_1_34_ICS_quality_bug_testing_report.md);
+user reference: README, section *Learning from experience*.
+
+**Why.** Cloudy-day errors are mainly weather-forecast errors (fog/stratus;
+6–11 Oct 2026: −21 % … +106 % per day, clear days ±1 %). They are
+systematic for recognisable situations, so they can be learned — provided
+the truth is measured independently of the PV model: SwissWeather Fusion
+0.3.4 exposes the MeteoSwiss Tänikon pyranometer (global and diffuse).
+
+**Where it sits.** A second config-entry type owns the `LearningHub`. The
+hub never touches the library; it changes the *input* of the local
+synthesis, the same seam the shading uses for the response:
+
+```
+Fusion series ─► LocalWeatherReader.async_snapshot ─┬─► library (raw estimate)
+                                                    └─► hub.async_correct_snapshot ─► library (corrected estimate)
+                     coordinator serves the corrected one only in hub state "applied"
+Station sensor ──► hub (10-min samples → hours)      Recorder statistics ──► hub (production per group)
+weather.get_forecasts ──► hub hourly run (xx:25): predictors, corrections, archive
+hub nightly run (03:30): production, model-from-station, day decisions, stage 2, gate, export
+```
+
+**Ownership and concurrency (owner request, 13 Oct 2026).** Each entry owns
+its runtime object in `ConfigEntry.runtime_data` (coordinator or hub);
+`runtime.py` types them and resolves cross-entry references only for loaded
+entries. The coordinator is constructed with its `config_entry`. Sensors
+have `PARALLEL_UPDATES = 0` (pushed by coordinator/hub), switches `1`. The
+hub holds one lock for its runs and for owner actions; computations run in
+the executor on `LearningData.view()` (copies of every container the event
+loop may change meanwhile); `to_json()` runs in the loop, serialisation and
+export in the executor; recorder access only via the recorder's executor.
+
+**New requirements.**
+
+| ID | Requirement | Verified by |
+|---|---|---|
+| R34 | Without hub/group and in every non-`applied` state the served forecast is unchanged | `test_member_forecast_is_unchanged_while_not_applied`, `test_entry_without_hub_or_group_behaves_as_before`; M170, M174 |
+| R35 | Corrections act only with gate passed **and** owner switch on; automatic fallback on a failed gate | state matrix, `test_applied_corrections_change_the_served_forecast`; M155–M157, M160, M162 |
+| R36 | Learner faults never fail or block a forecast (30 s bound) | `test_failing_correction_*`, `test_slow_correction_*`, `test_corrupt_store_*`; M171–M173, M178 |
+| R37 | No look-ahead; stored corrections reproducible from the export | `test_evidence_only_*`, `test_replay_*`; M124, M125, M132, M168 |
+| R38 | Learned corrections bounded (Δkt ≤ 0.35, kd ∈ [0.05, 1], stage 2 ∈ [0.85, 1.15]) and shrunk to neutral | `test_shift_bounds`, `test_shrinkage_formula_by_hand`, `test_stage2_*`; M134, M139, M146, M148 |
+| R39 | Only quality-controlled days are evidence (station completeness, snow, production faults, representativeness) | `test_day_*`, `test_representativeness`; M149–M153 |
+| R40 | Full transparency: per-hour explanation, raw vs corrected, events, export, replay | hub tests, `test_example_dashboard_matches_the_entities`, replay tests |
+| R41 | Lifecycle ownership and deliberate concurrency as above | `test_platform_concurrency_and_runtime_ownership`, `test_owner_actions_wait_for_a_running_job`, `test_heavy_work_runs_outside_the_event_loop`, `test_view_isolates_*` |
+
+**New failure modes.**
+
+| ID | Condition | Behaviour |
+|---|---|---|
+| F20 | Station sensor missing/stale/without global radiation | no new evidence; hours incomplete → days excluded; state sensor attribute `station` |
+| F21 | Weather forecast without cloud layers (Fusion < 0.3.4) | hourly step fails visibly (event, `last_run`); no archive, no corrections |
+| F22 | Recorder unavailable / energy counter without statistics | nightly step `production` fails visibly; days wait, then `production_missing` |
+| F23 | Station not representative (14-day correlation < 0.85) | state `paused`, forecast raw |
+| F24 | Member entry removed or switched to Open-Meteo / sources differ | state `paused` (configuration), forecast raw |
+| F25 | Learning store unreadable or malformed | copy kept as `.corrupt-<time>`, neutral start, event |
+| F26 | Store above 8 MB | oldest 30-day blocks dropped, event |
+
+**New limitations.** L-L1 hours beyond 54 h lead are never corrected (in
+hybrid mode Fusion days 3–5 stay raw); L-L2 a single station 8 km away is
+the truth — local fog boundaries are caught only by the day-ratio and
+correlation checks; L-L3 stage 2 cannot separate arrays sharing an inverter
+(one factor per group); L-L4 spring/summer situations need new evidence
+(automatic shrinkage to neutral, no transfer from autumn); L-L5 no same-day
+correction yet (spec §12).
 
 ---
 

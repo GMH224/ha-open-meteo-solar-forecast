@@ -11,6 +11,10 @@
         "description": "Allgemeine Einstellungen für alle PV-Anlagen. Klicke auf „Weiter“, um Standort, Ausrichtung, Leistung und weitere Einstellungen jeder Anlage zu bearbeiten.",
         "data_description": {
           "weather_source": "Open-Meteo: Wettermodell der Open-Meteo-API (Standard). Lokal: Strahlung und Temperatur aus Home-Assistant-Entitäten, z. B. SwissWeather Fusion; ohne Internetzugriff, Aktualisierung alle 10 Minuten. Hybrid: lokal für jeden Tag, den die lokalen Daten vollständig abdecken, Open-Meteo für alle übrigen Tage (Übergang um Mitternacht)."
+        },
+        "menu_options": {
+          "common": "PV-Feld hinzufügen",
+          "learning_hub": "Lern-Hub einrichten"
         }
       },
       "array": {
@@ -46,6 +50,30 @@
           "local_snow_depth_entity": "Optional. Schneehöhe am Boden; wird nur verwendet, wenn die maximale Schneebedeckung grösser als 0 ist. Leer lassen für automatische Erkennung.",
           "local_fallback_open_meteo": "Wenn die lokalen Daten fehlen oder veraltet sind, stattdessen Open-Meteo abfragen. Wenn aus, bleibt die letzte gültige Prognose erhalten (fail-safe, kein Internetzugriff)."
         }
+      },
+      "learning_hub": {
+        "title": "Lern-Hub: Referenzstation",
+        "description": "Der Lern-Hub korrigiert die lokalen Wetterdaten aus Erfahrung (siehe Dokumentation). Er startet neutral und verändert die Prognose erst, wenn er sich über 28 Tage als besser erwiesen hat UND du ihn einschaltest. Wähle den Referenzstations-Sensor von SwissWeather Fusion (MeteoSwiss-Messwerte, ab Version 0.3.4).",
+        "data": {
+          "station_entity": "Referenzstations-Sensor"
+        },
+        "data_description": {
+          "station_entity": "Sensor mit Attribut 'values' mit den 10-Minuten-Werten der Station (gre000z0 = Globalstrahlung)."
+        }
+      },
+      "hub_group": {
+        "title": "Lern-Hub: Wechselrichter-Gruppe {group_number}",
+        "description": "Eine Gruppe pro Energiezähler. Wähle die PV-Einträge, deren Produktion dieser Zähler misst (alle mit lokaler oder hybrider Wetterquelle).",
+        "data": {
+          "name": "Gruppenname",
+          "energy_entity": "Energiezähler",
+          "members": "PV-Einträge",
+          "add_another": "Weitere Gruppe hinzufügen"
+        },
+        "data_description": {
+          "energy_entity": "Gesamte erzeugte Energie (kWh/Wh, State-Class total oder total_increasing), z. B. DC-Eingangsenergie des Wechselrichters. Gelesen aus der Langzeitstatistik.",
+          "name": "Kurzer Name, z. B. 10K. Wird in Entitätsnamen verwendet."
+        }
       }
     },
     "error": {
@@ -54,7 +82,19 @@
       "irradiance_not_found": "Strahlungssensor nicht gefunden (und für diese Wetter-Entität nicht automatisch erkennbar).",
       "irradiance_no_series": "Der Sensor hat keine gültige 'hourly_forecast'-Reihe mit GHI/DNI/DHI.",
       "invalid_shading_file": "Verschattungsdatei ungültig: {shading_error}",
-      "shading_requires_fixed_array": "Eine Verschattungsdatei ist nur für fest montierte (nicht nachgeführte) Felder möglich."
+      "shading_requires_fixed_array": "Eine Verschattungsdatei ist nur für fest montierte (nicht nachgeführte) Felder möglich.",
+      "station_invalid": "Kein Referenzstations-Sensor: Attribut 'values' mit gre000z0 erforderlich.",
+      "energy_invalid": "Kein Energiezähler: Einheit Wh/kWh/MWh und State-Class total oder total_increasing erforderlich.",
+      "members_required": "Mindestens einen PV-Eintrag wählen.",
+      "member_missing": "Ein gewählter Eintrag existiert nicht mehr.",
+      "member_not_local": "Ein gewählter Eintrag nutzt keine lokale oder hybride Wetterquelle.",
+      "member_twice": "Ein Eintrag kann nur zu einer Gruppe gehören.",
+      "member_source_mismatch": "Alle Einträge müssen dieselbe Wetter-Entität und denselben Strahlungssensor nutzen.",
+      "group_name_invalid": "Name mit 1 bis 32 Zeichen eingeben.",
+      "group_name_duplicate": "Dieser Gruppenname ist bereits vergeben."
+    },
+    "abort": {
+      "already_configured": "Der Lern-Hub ist bereits eingerichtet."
     }
   },
   "entity": {
@@ -126,6 +166,54 @@
           "hybrid": "Hybrid (lokal + Open-Meteo)",
           "stale": "Veraltet (seit über 6 h keine neue Prognose)"
         }
+      },
+      "state": {
+        "name": "Zustand",
+        "state": {
+          "collecting": "Sammelt Daten",
+          "shadow": "Schattenbetrieb (berechnet, nicht angewendet)",
+          "eligible": "Freigegeben (Schalter aus)",
+          "applied": "Angewendet",
+          "paused": "Pausiert"
+        }
+      },
+      "evidence": {
+        "name": "Datenbasis"
+      },
+      "irradiance_improvement": {
+        "name": "Verbesserung Einstrahlung"
+      },
+      "next_hours": {
+        "name": "Korrigierte kommende Stunden"
+      },
+      "station_correlation": {
+        "name": "Korrelation Station"
+      },
+      "station_albedo": {
+        "name": "Bodenalbedo Station"
+      },
+      "last_run": {
+        "name": "Letzter Lernlauf"
+      },
+      "energy_error": {
+        "name": "Täglicher Energiefehler {group}"
+      },
+      "correction_today": {
+        "name": "Korrektur heute {group}"
+      },
+      "correction_tomorrow": {
+        "name": "Korrektur morgen {group}"
+      },
+      "calibration": {
+        "name": "Kalibrierung {group}"
+      }
+    },
+    "switch": {
+      "apply_learning": {
+        "name": "Lernen anwenden"
+      },
+      "freeze_learning": {
+        "name": "Lernen einfrieren"
       }
     }
   },
@@ -137,7 +225,16 @@
       "irradiance_not_found": "Strahlungssensor nicht gefunden (und für diese Wetter-Entität nicht automatisch erkennbar).",
       "irradiance_no_series": "Der Sensor hat keine gültige 'hourly_forecast'-Reihe mit GHI/DNI/DHI.",
       "invalid_shading_file": "Verschattungsdatei ungültig: {shading_error}",
-      "shading_requires_fixed_array": "Eine Verschattungsdatei ist nur für fest montierte (nicht nachgeführte) Felder möglich."
+      "shading_requires_fixed_array": "Eine Verschattungsdatei ist nur für fest montierte (nicht nachgeführte) Felder möglich.",
+      "station_invalid": "Kein Referenzstations-Sensor: Attribut 'values' mit gre000z0 erforderlich.",
+      "energy_invalid": "Kein Energiezähler: Einheit Wh/kWh/MWh und State-Class total oder total_increasing erforderlich.",
+      "members_required": "Mindestens einen PV-Eintrag wählen.",
+      "member_missing": "Ein gewählter Eintrag existiert nicht mehr.",
+      "member_not_local": "Ein gewählter Eintrag nutzt keine lokale oder hybride Wetterquelle.",
+      "member_twice": "Ein Eintrag kann nur zu einer Gruppe gehören.",
+      "member_source_mismatch": "Alle Einträge müssen dieselbe Wetter-Entität und denselben Strahlungssensor nutzen.",
+      "group_name_invalid": "Name mit 1 bis 32 Zeichen eingeben.",
+      "group_name_duplicate": "Dieser Gruppenname ist bereits vergeben."
     },
     "step": {
       "init": {
@@ -184,6 +281,30 @@
           "local_snow_depth_entity": "Optional. Schneehöhe am Boden; wird nur verwendet, wenn die maximale Schneebedeckung grösser als 0 ist. Leer lassen für automatische Erkennung.",
           "local_fallback_open_meteo": "Wenn die lokalen Daten fehlen oder veraltet sind, stattdessen Open-Meteo abfragen. Wenn aus, bleibt die letzte gültige Prognose erhalten (fail-safe, kein Internetzugriff)."
         }
+      },
+      "hub_station": {
+        "title": "Lern-Hub: Referenzstation",
+        "description": "Der Lern-Hub korrigiert die lokalen Wetterdaten aus Erfahrung (siehe Dokumentation). Er startet neutral und verändert die Prognose erst, wenn er sich über 28 Tage als besser erwiesen hat UND du ihn einschaltest. Wähle den Referenzstations-Sensor von SwissWeather Fusion (MeteoSwiss-Messwerte, ab Version 0.3.4).",
+        "data": {
+          "station_entity": "Referenzstations-Sensor"
+        },
+        "data_description": {
+          "station_entity": "Sensor mit Attribut 'values' mit den 10-Minuten-Werten der Station (gre000z0 = Globalstrahlung)."
+        }
+      },
+      "hub_group": {
+        "title": "Lern-Hub: Wechselrichter-Gruppe {group_number}",
+        "description": "Eine Gruppe pro Energiezähler. Wähle die PV-Einträge, deren Produktion dieser Zähler misst (alle mit lokaler oder hybrider Wetterquelle).",
+        "data": {
+          "name": "Gruppenname",
+          "energy_entity": "Energiezähler",
+          "members": "PV-Einträge",
+          "add_another": "Weitere Gruppe hinzufügen"
+        },
+        "data_description": {
+          "energy_entity": "Gesamte erzeugte Energie (kWh/Wh, State-Class total oder total_increasing), z. B. DC-Eingangsenergie des Wechselrichters. Gelesen aus der Langzeitstatistik.",
+          "name": "Kurzer Name, z. B. 10K. Wird in Entitätsnamen verwendet."
+        }
       }
     }
   },
@@ -200,6 +321,26 @@
     "invalid_shading_file": {
       "title": "Verschattungsdatei für Feld {array} ignoriert",
       "description": "Die Verschattungsdatei `{path}` konnte nicht verwendet werden: {error}\n\nDie Prognose läuft für dieses Feld ohne Verschattung weiter. Korrigieren Sie die Datei (oder leeren Sie das Feld in den Feldeinstellungen) und laden Sie die Integration neu."
+    }
+  },
+  "services": {
+    "reset_learning": {
+      "name": "Lernen zurücksetzen",
+      "description": "Gelernte Korrekturen verwerfen. stage1: Wetterkorrektur; stage2: Wechselrichter-Kalibrierung; all: alles (inkl. Archiv). Die Bewährungsprüfung beginnt neu.",
+      "fields": {
+        "confirm": {
+          "name": "Bestätigen",
+          "description": "Muss true sein."
+        },
+        "scope": {
+          "name": "Umfang",
+          "description": "stage1, stage2 oder all."
+        }
+      }
+    },
+    "export_learning": {
+      "name": "Lerndaten exportieren",
+      "description": "Exportdateien jetzt nach /config/open_meteo_solar_forecast/export schreiben (geschieht auch jede Nacht)."
     }
   }
 }

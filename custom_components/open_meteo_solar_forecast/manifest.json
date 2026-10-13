@@ -1,13 +1,21 @@
 {
   "domain": "open_meteo_solar_forecast",
   "name": "Open-Meteo Solar Forecast",
-  "after_dependencies": ["weather"],
-  "codeowners": ["@rany2", "@GMH224"],
+  "after_dependencies": [
+    "weather",
+    "recorder"
+  ],
+  "codeowners": [
+    "@rany2",
+    "@GMH224"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/GMH224/ha-open-meteo-solar-forecast",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/GMH224/ha-open-meteo-solar-forecast/issues",
-  "requirements": ["open_meteo_solar_forecast==0.1.32"],
-  "version": "0.1.33.5"
+  "requirements": [
+    "open_meteo_solar_forecast==0.1.32"
+  ],
+  "version": "0.1.34"
 }

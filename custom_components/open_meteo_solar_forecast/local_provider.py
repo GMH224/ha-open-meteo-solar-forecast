@@ -426,8 +426,10 @@ class LocalWeatherReader:
     def _comparison(self, now: datetime) -> dict[str, Any]:
         """Current-hour ICON GHI next to SRF's independent GHI (if found).
 
-        Comparison only; SRF never feeds the forecast (its averaging basis
-        is undocumented).
+        Comparison only; SRF never feeds the forecast. Since Fusion 0.3.4 the
+        SRF sensor state is the average of the current hour (Fusion corrected
+        a one-hour label offset); only the state is read here, so nothing
+        else depends on SRF's series keys.
         """
         current = self._hours.get(floor_hour(now))
         result: dict[str, Any] = {"icon_ghi_hour_average": getattr(current, "ghi", None)}

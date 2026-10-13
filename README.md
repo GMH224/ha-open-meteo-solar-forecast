@@ -188,8 +188,8 @@ version: 1
 electrical_model: bypass      # bypass (default) | area (optimisers / micro-inverters)
 array:
   azimuth: 197                # direction the panels face
-  tilt: 45
-  origin: [-5.8, 2.0, 0.25]   # lower-left corner of the module field, seen from the front
+  tilt: 40
+  origin: [-5.3, 1.9, 0.23]   # lower-left corner of the module field, seen from the front
   rows: 5                     # row 1 = bottom
   columns: 3                  # column 1 = left
   module_width: 1.72          # along a row (width > height = landscape)
@@ -254,6 +254,81 @@ Limits: file 256 KiB, 70 000 table rows, 64 obstacles, 64 polygon corners,
 120 modules, 16 strings, coordinates within ±1000 m. Not supported for
 tracking arrays. Shadows on diffuse light (the part of the sky an object
 hides) and reflections are not modelled.
+
+### Learning from experience (learning hub, 0.1.34)
+
+Weather models misjudge some situations systematically - fog and low
+stratus above all. The **learning hub** compares, hour by hour, what the
+local weather forecast (SwissWeather Fusion) said with what the nearest
+MeteoSwiss station actually measured, and with what your inverters produced.
+From that it learns two small corrections:
+
+1. **Weather (shared by all arrays):** for each coming hour it looks up the
+   most similar past forecast situations (forecast clearness, sun height,
+   low cloud, mid/high cloud, temperature minus dew point, lead time) and how
+   wrong the forecast was then. The forecast light is shifted by their
+   weighted mean error - shrunk towards zero when there are few or
+   dissimilar past hours ("analog ensemble").
+2. **Calibration per inverter:** the model is re-run every night with the
+   *measured* station light; production divided by that model, separately
+   for overcast, broken and clear hours, gives a small factor (0.85-1.15).
+
+It **starts neutral** and changes your forecast only when **both** hold:
+the nightly skill check over the last 28 days shows the corrected 06:00
+forecast to be at least 5 % better against the station (and the daily
+energy error not worse), **and** you have switched *Apply learning* on.
+If the check later fails, it falls back to the raw forecast by itself.
+Any fault in the learner leaves the forecast raw; it never stops a forecast.
+
+**Requirements:** PV entries in *local* or *hybrid* mode with SwissWeather
+Fusion >= 0.3.4 (cloud layers in the hourly forecast, reference-station
+sensor), and an energy counter per inverter with long-term statistics.
+
+**Setup:** *Settings > Devices & services > Add integration > Open-Meteo
+Solar Forecast* > **Set up the learning hub** (offered once a PV entry
+exists). Page 1: the reference-station sensor
+(`sensor.swissweather_fusion_reference_station`). Then one page per inverter
+group: a name (e.g. `10K`), the energy counter
+(e.g. `sensor.inverter_total_dc_input_energy`) and the PV entries it
+measures (e.g. West and South). Your PV entries are not changed.
+
+**What you see** (device *Solar forecast learning*):
+
+| Entity | Meaning |
+|---|---|
+| `sensor.solar_forecast_learning_state` | `collecting` (< 14 days), `shadow` (computed, not good enough yet), `eligible` (good enough, switch off), `applied`, `paused`; attribute `reason` says why |
+| `switch.solar_forecast_learning_apply_learning` | your authority: corrections act only when on **and** eligible |
+| `switch.solar_forecast_learning_freeze_learning` | keep the model as it is (evidence is still recorded) |
+| `sensor.solar_forecast_learning_next_hours` | for each of the next 36 h: forecast vs corrected light, the predictors and the five most similar past hours - the *why* of every correction |
+| `sensor.solar_forecast_learning_irradiance_improvement` | skill check result (%), with the raw and corrected errors |
+| `sensor.solar_forecast_learning_<group>_correction_today` / `_tomorrow` | kWh corrected minus raw for that inverter |
+| `sensor.solar_forecast_learning_<group>_energy_error` | mean daily energy error of the corrected 06:00 forecast |
+| `sensor.solar_forecast_learning_<group>_calibration` | stage-2 factors; attribute `suggested_efficiency_change_percent` |
+| `sensor.solar_forecast_learning_station_correlation` | is the station representative of your roof? (learning pauses below 0.85) |
+| `sensor.solar_forecast_learning_station_albedo` | reflected / global light at the station; above 0.4: snow on the ground (days excluded) |
+| `sensor.solar_forecast_learning_evidence`, `_last_run` | how much evidence exists; the last nightly run with each step's outcome |
+
+Every PV entry's `forecast_source` sensor shows a `learning` attribute with
+the raw and corrected totals side by side, so the raw forecast is always
+visible.
+
+**Export:** every night (03:30) and with the service
+`open_meteo_solar_forecast.export_learning`, all evidence, decisions and
+corrections are written as CSV/JSON to
+`/config/open_meteo_solar_forecast/export/` (fixed folder, 400 days).
+`tools/learning_replay.py <folder>` recomputes every correction from the
+export with an independent implementation.
+
+**Reset:** service `open_meteo_solar_forecast.reset_learning` with
+`confirm: true` and `scope: stage1 | stage2 | all`. Removing the hub keeps
+the learned data.
+
+**Dashboard:** `examples/dashboard/learning.yaml` (core cards only).
+
+**What to expect:** two weeks of collecting; corrections for common autumn
+situations (fog/stratus, broken cloud) after 3-6 weeks; broad coverage after
+about 10 weeks. Clear days do not change - the physics already handles
+them. Design record: `OMSF_v0_1_34_Learning_Spec.md`.
 
 ## Credits
 

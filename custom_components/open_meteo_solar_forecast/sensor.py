@@ -37,6 +37,10 @@ from .const import (
 )
 from .coordinator import OpenMeteoSolarForecastDataUpdateCoordinator
 
+# 0.1.34: entities only read the coordinator's data (pushed); no limit on
+# parallel state writes is needed.
+PARALLEL_UPDATES = 0
+
 
 @dataclass(frozen=True)
 class OpenMeteoSolarForecastSensorEntityDescription(SensorEntityDescription):
@@ -232,9 +236,16 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Defer sensor setup to the shared sensor module."""
-    coordinator: OpenMeteoSolarForecastDataUpdateCoordinator = hass.data[DOMAIN][
-        entry.entry_id
-    ]
+    # 0.1.34: the learning hub has its own sensors.
+    from .learning_entities import hub_sensors
+    from .learning_hub import LearningHub
+    from .runtime import is_hub_entry
+
+    if is_hub_entry(entry):
+        if isinstance(entry.runtime_data, LearningHub):
+            async_add_entities(hub_sensors(entry.runtime_data))
+        return
+    coordinator: OpenMeteoSolarForecastDataUpdateCoordinator = entry.runtime_data
 
     entities: list[SensorEntity] = [
         OpenMeteoSolarForecastSensorEntity(
@@ -318,6 +329,9 @@ class ForecastSourceSensorEntity(
                 {key: item.get(key) for key in ("array", "state", "error")}
                 for item in getattr(self.coordinator, "shading_report", [])
             ],
+            # 0.1.34: learning (None = entry is not in an inverter group);
+            # raw and corrected day totals side by side.
+            "learning": getattr(self.coordinator, "learning_report", None),
         }
 
 

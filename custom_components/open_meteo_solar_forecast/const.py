@@ -92,3 +92,21 @@ FUSION_WEATHER_SUFFIX = "_weather"
 FUSION_IRRADIANCE_SUFFIX = "_solar_ghi"
 FUSION_SNOW_DEPTH_SUFFIX = "_snow_depth"
 FUSION_SRF_IRRADIANCE_SUFFIX = "_srf_irradiance"
+
+# --- 0.1.34: learning hub (OMSF_v0_1_34_Learning_Spec.md) ------------------
+CONF_ENTRY_TYPE = "entry_type"
+ENTRY_TYPE_LEARNING_HUB = "learning_hub"
+LEARNING_HUB_UNIQUE_ID = "learning_hub"
+CONF_STATION_ENTITY = "station_entity"
+CONF_GROUPS = "groups"
+CONF_GROUP_NAME = "name"
+CONF_GROUP_ENERGY_ENTITY = "energy_entity"
+CONF_GROUP_MEMBERS = "members"
+DEFAULT_STATION_ENTITY = "sensor.swissweather_fusion_reference_station"
+LEARNING_STORAGE_KEY = f"{DOMAIN}.learning"
+LEARNING_STORAGE_VERSION = 1
+# Fixed (not configurable) export folder below the HA configuration folder.
+LEARNING_EXPORT_SUBDIR = ("open_meteo_solar_forecast", "export")
+SERVICE_RESET_LEARNING = "reset_learning"
+SERVICE_EXPORT_LEARNING = "export_learning"
+ATTR_LEARNING_HOURS = "hours"

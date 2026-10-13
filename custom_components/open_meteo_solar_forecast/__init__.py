@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -29,6 +29,9 @@ from .const import (
     DOMAIN,
 )
 from .shading_provider import async_delete_shading_issues, async_load_shading
+from .learning_hub import LearningHub, get_hub
+from .runtime import ArrayConfigEntry, HubConfigEntry, SolarForecastConfigEntry, is_hub_entry
+from .const import SERVICE_EXPORT_LEARNING, SERVICE_RESET_LEARNING
 from .coordinator import (
     STORAGE_VERSION,
     OpenMeteoSolarForecastDataUpdateCoordinator,
@@ -38,6 +41,7 @@ from .coordinator import (
 from .local_provider import HISTORY_STORAGE_VERSION, history_storage_key
 
 PLATFORMS = [Platform.SENSOR]
+HUB_PLATFORMS = [Platform.SENSOR, Platform.SWITCH]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -62,6 +66,15 @@ def _finite_in_range(low: float, high: float):
 
 # 0.1.33.4 (external audit OMSF-002): server-side schema. The location
 # selector also sends e.g. "radius", hence ALLOW_EXTRA on the inner mapping.
+RESET_SCHEMA = vol.Schema(
+    {
+        # 0.1.34: a reset needs an explicit confirmation in the call itself.
+        vol.Required("confirm"): vol.All(cv.boolean, vol.IsTrue("confirm must be true")),
+        vol.Required("scope"): vol.In(("stage1", "stage2", "all")),
+    }
+)
+EXPORT_SCHEMA = vol.Schema({})
+
 SERVICE_SCHEMA = vol.Schema(
     {
         vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
@@ -89,7 +102,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         loaded = [
             entry
             for entry in hass.config_entries.async_entries(DOMAIN)
-            if entry.state is ConfigEntryState.LOADED
+            if entry.state is ConfigEntryState.LOADED and not is_hub_entry(entry)
         ]
         entry_id = call.data.get(ATTR_CONFIG_ENTRY_ID)
         if entry_id:
@@ -126,6 +139,25 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         SERVICE_UPDATE_ARRAY_LOCATION,
         async_update_array_location,
         schema=SERVICE_SCHEMA,
+    )
+
+    def _require_hub() -> LearningHub:
+        hub = get_hub(hass)
+        if hub is None:
+            raise ServiceValidationError("No learning hub is set up")
+        return hub
+
+    async def async_reset_learning(call: ServiceCall) -> None:
+        await _require_hub().async_reset(call.data["scope"])
+
+    async def async_export_learning(call: ServiceCall) -> None:
+        await _require_hub().async_export()
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_RESET_LEARNING, async_reset_learning, schema=RESET_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_EXPORT_LEARNING, async_export_learning, schema=EXPORT_SCHEMA
     )
     return True
 
@@ -189,8 +221,29 @@ def _normalize_option(value: Any, array_count: int, default: Any) -> list[Any]:
     return [value] * array_count
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Solar Forecast from a config entry."""
+async def _async_setup_hub(hass: HomeAssistant, entry: HubConfigEntry) -> bool:
+    """0.1.34: the learning hub (one per instance), owned by its entry."""
+    hub = LearningHub(hass, entry)
+    await hub.async_setup()
+    entry.runtime_data = hub
+    await hass.config_entries.async_forward_entry_setups(entry, HUB_PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: SolarForecastConfigEntry) -> bool:
+    """Set up Solar Forecast from a config entry.
+
+    0.1.34: the runtime object (coordinator or learning hub) is owned by the
+    entry (``ConfigEntry.runtime_data``), not kept in ``hass.data``.
+    """
+    if is_hub_entry(entry):
+        return await _async_setup_hub(hass, cast(HubConfigEntry, entry))
+    return await _async_setup_array(hass, cast(ArrayConfigEntry, entry))
+
+
+async def _async_setup_array(hass: HomeAssistant, entry: ArrayConfigEntry) -> bool:
+    """A PV-array entry; owns its coordinator."""
     default_horizon_map: tuple[tuple[float, float], ...] = ((0.0, 0.0), (360.0, 0.0))
     default_horizon_path = "/config/custom_components/open_meteo_solar_forecast/horizon.txt"
 
@@ -250,7 +303,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -259,17 +312,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: SolarForecastConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
-
-    return unload_ok
+    if is_hub_entry(entry):
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, HUB_PLATFORMS)
+        hub = getattr(entry, "runtime_data", None)
+        if unload_ok and isinstance(hub, LearningHub):
+            await hub.async_unload()  # listeners off, store written
+        return unload_ok
+    # The coordinator is released with the entry (runtime_data).
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Remove the retained forecast storage for a removed config entry."""
+    """Remove the retained forecast storage for a removed config entry.
+
+    0.1.34: removing the learning hub keeps the learning store and the
+    export files (months of evidence; a new hub continues from them). The
+    service ``reset_learning`` (scope all) deletes the learned state.
+    """
+    if is_hub_entry(entry):
+        return
     await Store(hass, STORAGE_VERSION, storage_key(entry.entry_id)).async_remove()
     await Store(
         hass, HISTORY_STORAGE_VERSION, history_storage_key(entry.entry_id)

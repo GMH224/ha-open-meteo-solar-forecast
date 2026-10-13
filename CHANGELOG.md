@@ -1,5 +1,51 @@
 # Changelog — GMH224 fork
 
+## 0.1.34 — 2026-10-13 — learning hub (self-learning weather correction)
+
+Design record: `OMSF_v0_1_34_Learning_Spec.md` (confirmed by the owner on
+12 Oct 2026). Release audit: `omsf_v0.1.34_release_audit.md`.
+
+### Added
+- **Learning hub** (new entry type, at most one): learns from the MeteoSwiss
+  reference station (SwissWeather Fusion >= 0.3.4) and the inverters'
+  energy counters how the local weather forecast errs, and corrects it.
+  Stage 1: analog ensemble on six predictors (forecast clearness, sun
+  elevation, low cloud, mid/high cloud, temperature - dew point, lead time),
+  shrunk to neutral on thin evidence. Stage 2: per-inverter calibration by
+  sky type from the model re-run on measured light.
+- **Owner control and safety:** starts neutral; acts only when the nightly
+  skill check (28 days, 06:00 forecast, >= 5 % better, energy not worse)
+  passes **and** the switch *Apply learning* is on; falls back by itself;
+  every fault leaves the forecast raw; corrections bounded.
+- **Transparency:** 7 hub sensors + 4 per group, 2 switches, per-hour
+  explanation (similar past hours), raw and corrected totals on every
+  member's `forecast_source`, hub diagnostics with the event log, nightly
+  CSV/JSON export to `/config/open_meteo_solar_forecast/export/`,
+  services `reset_learning` (with confirmation) and `export_learning`.
+- `tools/learning_replay.py`: independent re-implementation that reproduces
+  every stored correction and the skill check from the export.
+- `examples/dashboard/learning.yaml`: dashboard with core cards only.
+
+### Changed
+- **Home Assistant platform (owner request, 13 Oct 2026):** runtime objects
+  owned by `ConfigEntry.runtime_data` (no `hass.data`), typed entry aliases
+  and data models (`runtime.py`), coordinator bound to its entry,
+  `PARALLEL_UPDATES` on both platforms, learning computations in the
+  executor on consistent copies, owner actions serialised with the runs.
+  mypy: new modules clean under strict settings; the 38 findings in older
+  modules are unchanged from 0.1.33.5 (backlog).
+- **South geometry example refitted for 40° roofs** (owner, 12 Oct 2026);
+  the 45° version is kept as `examples/shading/south_geometry_45deg.yaml`.
+- The setup dialog offers a menu (PV array / learning hub) once a PV entry
+  exists and no hub does.
+- Recorder: the hub's per-hour explanation list is not recorded.
+- SRF comment updated (Fusion 0.3.4 documents the hour averaging).
+
+### Unchanged
+- PV entries that are not in an inverter group, and every Open-Meteo-mode
+  entry, behave exactly as in 0.1.33.5. While the hub is not in state
+  `applied`, member forecasts are also unchanged (shadow mode).
+
 ## 0.1.33.5 — 2026-10-11 — partial shading (geometry and table)
 
 ### Added

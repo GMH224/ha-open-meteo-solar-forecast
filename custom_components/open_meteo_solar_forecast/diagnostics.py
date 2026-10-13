@@ -12,7 +12,6 @@ from homeassistant.const import CONF_API_KEY, CONF_LATITUDE, CONF_LONGITUDE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import DOMAIN
 
 TO_REDACT = {
     CONF_API_KEY,
@@ -25,7 +24,11 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    coordinator: DataUpdateCoordinator[Estimate] = hass.data[DOMAIN][entry.entry_id]
+    from .runtime import is_hub_entry
+
+    if is_hub_entry(entry):
+        return _hub_diagnostics(getattr(entry, "runtime_data", None), entry)
+    coordinator: DataUpdateCoordinator[Estimate] = entry.runtime_data
 
     return {
         "entry": {
@@ -58,6 +61,55 @@ async def async_get_config_entry_diagnostics(
         "source": _source_diagnostics(coordinator),
         # 0.1.33.5: partial shading per array
         "shading": getattr(coordinator, "shading_report", []),
+        # 0.1.34: learning (None = not in an inverter group)
+        "learning": getattr(coordinator, "learning_report", None),
+    }
+
+
+def _hub_diagnostics(hub: Any, entry: ConfigEntry) -> dict[str, Any]:
+    """0.1.34: everything the learner decides with, except raw hour data
+    (that is in the export folder). No paths, no coordinates."""
+    if hub is None:
+        return {"entry": {"title": entry.title, "options": dict(entry.options)}, "hub": "not loaded"}
+    d = hub.data.d
+    statuses: dict[str, int] = {}
+    for item in d["days"].values():
+        statuses[item["status"]] = statuses.get(item["status"], 0) + 1
+    return {
+        "entry": {"title": entry.title, "options": dict(entry.options)},
+        "state": d["state"],
+        "applies": hub.applies,
+        "settings": d["settings"],
+        "freeze": d["freeze"],
+        "resets": d["resets"],
+        "configuration_problem": hub.config_problem,
+        "store_fault": hub.store_fault,
+        "store_bytes": hub.store_size,
+        "groups": [{"name": g.name, "kwp": g.kwp, "members": list(g.members)} for g in hub.groups],
+        "inputs": {
+            "weather_entity": hub.weather_entity,
+            "irradiance_entity": hub.irradiance_entity,
+            "station": hub.station_status,
+        },
+        "counts": {
+            "archived_hours": len(d["archive"]),
+            "station_hours": len(d["station_hours"]),
+            "station_samples": len(d["station_samples"]),
+            "days_by_status": statuses,
+            "production_hours": {g: len(h) for g, h in d["production"].items()},
+            "model_hours": {g: len(h) for g, h in d["model"].items()},
+            "forecasts_0600": len(d["issue6"]),
+        },
+        "evidence": hub.evidence_info,
+        "gate": d["gate"],
+        "gate_history": d["gate_history"],
+        "stage2": d["stage2"],
+        "representativeness": d["representativeness"],
+        "last_hourly": hub.last_hourly,
+        "last_nightly": hub.last_nightly,
+        "entry_reports": hub.entry_reports,
+        "next_hours": hub.next_hours,
+        "events": d["events"],
     }
 
 

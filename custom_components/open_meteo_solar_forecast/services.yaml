@@ -9,3 +9,18 @@ update_array_location:
       required: false
       selector:
         location:
+reset_learning:
+  fields:
+    confirm:
+      required: true
+      selector:
+        boolean:
+    scope:
+      required: true
+      selector:
+        select:
+          options:
+            - stage1
+            - stage2
+            - all
+export_learning:

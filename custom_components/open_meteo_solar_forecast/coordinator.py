@@ -8,7 +8,7 @@ import json
 import os
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, CONF_LATITUDE, CONF_LONGITUDE
@@ -65,7 +65,8 @@ from .local_provider import (
     LocalOpenMeteoSolarForecast,
     LocalWeatherReader,
 )
-from .local_source import complete_local_dates
+from .local_source import HourRecord, LocalSnapshot, complete_local_dates
+from .runtime import LearningReport
 
 import numpy
 
@@ -83,6 +84,13 @@ class RetainedForecastStore(Store[dict[str, Any]]):
 # The upstream library performs the API request without any timeout, so an
 # unreachable API can hang a refresh (and config entry setup) indefinitely.
 API_TIMEOUT_SECONDS = 60
+LEARNING_TIMEOUT_SECONDS = 30  # 0.1.34: bound of the corrected (second) estimate
+
+
+def _day_totals(estimate: Estimate) -> dict[date, float]:
+    """``Estimate.wh_days`` keyed by local date (the library annotates the
+    keys as datetime, but stores dates)."""
+    return {cast(date, day): float(wh) for day, wh in estimate.wh_days.items()}
 
 
 def storage_key(entry_id: str) -> str:
@@ -407,6 +415,11 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         self.hybrid_status: dict[str, Any] | None = None
         self.local_reader: LocalWeatherReader | None = None
         self.local_forecast: LocalOpenMeteoSolarForecast | None = None
+        # 0.1.34: learning (OMSF_v0_1_34_Learning_Spec.md). None = this entry
+        # is not a member of an inverter group: behaviour as in 0.1.33.5.
+        self.learning_report: LearningReport | None = None
+        self._forecast_kwargs = forecast_kwargs
+        self._active_shading = active_shading
         if self.uses_local:
             first_lat = latitude[0] if _is_sequence(latitude) else latitude
             first_lon = longitude[0] if _is_sequence(longitude) else longitude
@@ -430,7 +443,10 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         else:
             update_interval = timedelta(minutes=OPEN_METEO_UPDATE_MINUTES)
 
-        super().__init__(hass, LOGGER, name=DOMAIN, update_interval=update_interval)
+        # 0.1.34: the coordinator is bound to its entry (lifecycle ownership).
+        super().__init__(
+            hass, LOGGER, config_entry=entry, name=DOMAIN, update_interval=update_interval
+        )
 
     async def _async_load_retained_estimate(self) -> Estimate | None:
         """Load the retained forecast persisted across restarts."""
@@ -639,6 +655,9 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
                 self.local_forecast.prepare(self.hass, snapshot)
                 estimate = await self.local_forecast.estimate()
             self.last_local_stats = list(self.local_forecast.local_stats or [])
+            # 0.1.34: learning hub. Outside the timeout above, with its own
+            # bound (30 s); it can never fail the local forecast.
+            estimate = await self._async_apply_learning(snapshot, estimate)
             local_days = await self.hass.async_add_executor_job(
                 complete_local_dates,
                 snapshot.hours,
@@ -681,6 +700,104 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         if DAY_SOURCE_OPEN_METEO in sources.values():
             return merged, ACTIVE_SOURCE_HYBRID
         return merged, ACTIVE_SOURCE_LOCAL
+
+    async def _async_apply_learning(self, snapshot: LocalSnapshot, raw: Estimate) -> Estimate:
+        """Compute the corrected estimate next to the raw one (0.1.34).
+
+        Both are always computed for a group member, so the hub can show and
+        evaluate the correction ("shadow") before it is allowed to act. The
+        corrected one is served only in hub state ``applied``. Any failure
+        leaves the raw estimate in place.
+        """
+        from .learning_hub import get_hub  # local import: avoids a cycle
+
+        hub = get_hub(self.hass)
+        group = hub.group_for(self.config_entry.entry_id) if hub is not None else None
+        reader = self.local_reader
+        if hub is None or group is None or self.local_forecast is None or reader is None:
+            self.learning_report = None
+            return raw
+        raw_stats = list(self.last_local_stats)
+        raw_shading = self.local_forecast.shading_stats
+        try:
+            async with asyncio.timeout(LEARNING_TIMEOUT_SECONDS):
+                corrected = await hub.async_correct_snapshot(snapshot, self.config_entry.entry_id)
+                if corrected is None:
+                    self.learning_report = LearningReport(
+                        group=group.name, state=hub.state, applied=False, note="no correction available"
+                    )
+                    return raw
+                self.local_forecast.prepare(self.hass, corrected[0])
+                estimate_corr = await self.local_forecast.estimate()
+                corr_stats = list(self.local_forecast.local_stats or [])
+                complete = await self.hass.async_add_executor_job(
+                    complete_local_dates, snapshot.hours, reader.latitude,
+                    reader.longitude, snapshot.utc_offset_seconds,
+                )
+            now = dt_util.utcnow()
+            hub.report_entry(
+                self.config_entry.entry_id, _day_totals(raw), _day_totals(estimate_corr), complete, now
+            )
+        except Exception as err:  # noqa: BLE001 - fail-safe: raw forecast
+            LOGGER.warning("Learning: corrected forecast failed, serving raw: %s", sanitize_error(err))
+            self.local_forecast.shading_stats = raw_shading
+            self.last_local_stats = raw_stats
+            self.learning_report = LearningReport(
+                group=group.name, state=hub.state, applied=False,
+                error=f"{type(err).__name__}: {sanitize_error(err)}",
+            )
+            return raw
+        applies = hub.applies
+        today = dt_util.as_local(now).date()
+        tomorrow = today + timedelta(days=1)
+        raw_days, corr_days = _day_totals(raw), _day_totals(estimate_corr)
+        self.learning_report = LearningReport(
+            group=group.name,
+            state=hub.state,
+            applied=applies,
+            hours_changed=corrected[1].get("hours_changed"),
+            today_raw_wh=raw_days.get(today),
+            today_corrected_wh=corr_days.get(today),
+            tomorrow_raw_wh=raw_days.get(tomorrow),
+            tomorrow_corrected_wh=corr_days.get(tomorrow),
+        )
+        if applies:
+            self.last_local_stats = corr_stats
+            return estimate_corr
+        self.local_forecast.shading_stats = raw_shading
+        self.last_local_stats = raw_stats
+        return raw
+
+    async def async_model_hours(
+        self,
+        records: dict[datetime, HourRecord],
+        temperatures: dict[datetime, float],
+        utc_offset_seconds: int,
+    ) -> dict[int, float]:
+        """Energy per UTC hour (Wh) this entry's model gives for *measured*
+        irradiance (learning stage 2, 0.1.34). A separate library instance,
+        so the live forecast object is never touched."""
+        if not self.uses_local:
+            raise LocalDataError("entry does not use the local weather source")
+        forecast = LocalOpenMeteoSolarForecast(**self._forecast_kwargs)
+        if self._active_shading:
+            forecast.shading_tables = self._active_shading
+            forecast.shading_hass = self.hass
+        snapshot = LocalSnapshot(
+            hours=records,
+            temperatures_c=temperatures,
+            utc_offset_seconds=utc_offset_seconds,
+            snow_depth_m=0.0,
+            fallback_temperature_c=None,
+        )
+        forecast.prepare(self.hass, snapshot)
+        async with asyncio.timeout(API_TIMEOUT_SECONDS):
+            estimate = await forecast.estimate()
+        result: dict[int, float] = {}
+        for moment, wh in estimate.wh_period.items():
+            ts = int(moment.timestamp())
+            result[ts - ts % 3600] = float(wh)
+        return result
 
     @staticmethod
     def _ensure_not_empty(estimate: Estimate) -> None:

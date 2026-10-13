@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_API_KEY, CONF_LATITUDE, CONF_LONGITUDE, CONF_NAME
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.selector import (
     BooleanSelector,
     EntitySelector,
@@ -16,12 +16,23 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
+    TextSelector,
 )
 
 from .const import (
+    CONF_ENTRY_TYPE,
+    CONF_GROUP_ENERGY_ENTITY,
+    CONF_GROUP_MEMBERS,
+    CONF_GROUP_NAME,
+    CONF_GROUPS,
+    CONF_STATION_ENTITY,
+    DEFAULT_STATION_ENTITY,
+    ENTRY_TYPE_LEARNING_HUB,
+    LEARNING_HUB_UNIQUE_ID,
     CONF_ARRAY_INVERTER_POWER,
     CONF_AZIMUTH,
     CONF_BASE_URL,
@@ -350,7 +361,166 @@ def _resolve_local_input(
     return resolved, errors
 
 
-class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
+# --------------------------------------------------------------------------
+# 0.1.34: learning hub (OMSF_v0_1_34_Learning_Spec.md §9)
+# --------------------------------------------------------------------------
+
+MAX_GROUP_NAME = 32
+HUB_TITLE = "Solar forecast learning"
+
+
+def _entries(hass: Any) -> list[ConfigEntry]:
+    # Tolerates the minimal hass stand-in of the legacy wizard tests.
+    manager = getattr(hass, "config_entries", None)
+    return list(manager.async_entries(DOMAIN)) if manager is not None else []
+
+
+def _array_entries(hass: Any) -> list[ConfigEntry]:
+    from .runtime import is_hub_entry
+
+    return [e for e in _entries(hass) if not is_hub_entry(e)]
+
+
+def _hub_exists(hass: Any) -> bool:
+    from .runtime import is_hub_entry
+
+    return any(is_hub_entry(e) for e in _entries(hass))
+
+
+def _station_schema(default: str | None) -> vol.Schema:
+    key = (
+        vol.Required(CONF_STATION_ENTITY, default=default)
+        if default
+        else vol.Required(CONF_STATION_ENTITY)
+    )
+    return vol.Schema({key: EntitySelector(EntitySelectorConfig(domain="sensor"))})
+
+
+def _group_schema(hass: Any, defaults: dict[str, Any], add_another_default: bool) -> vol.Schema:
+    options = [
+        SelectOptionDict(value=e.entry_id, label=e.title or e.entry_id) for e in _array_entries(hass)
+    ]
+    name = defaults.get(CONF_GROUP_NAME)
+    energy = defaults.get(CONF_GROUP_ENERGY_ENTITY)
+    members = defaults.get(CONF_GROUP_MEMBERS) or []
+    return vol.Schema(
+        {
+            (vol.Required(CONF_GROUP_NAME, default=name) if name else vol.Required(CONF_GROUP_NAME)): TextSelector(),
+            (
+                vol.Required(CONF_GROUP_ENERGY_ENTITY, default=energy)
+                if energy
+                else vol.Required(CONF_GROUP_ENERGY_ENTITY)
+            ): EntitySelector(EntitySelectorConfig(domain="sensor")),
+            vol.Required(CONF_GROUP_MEMBERS, default=list(members)): SelectSelector(
+                SelectSelectorConfig(options=options, multiple=True, mode=SelectSelectorMode.LIST)
+            ),
+            vol.Optional(CONF_ADD_ANOTHER, default=add_another_default): BooleanSelector(),
+        }
+    )
+
+
+def _validate_group(hass: Any, group: dict[str, Any], others: list[dict[str, Any]]) -> dict[str, str]:
+    from .learning_hub import member_sources, validate_energy_entity
+
+    errors: dict[str, str] = {}
+    name = str(group.get(CONF_GROUP_NAME) or "").strip()
+    if not name or len(name) > MAX_GROUP_NAME:
+        errors[CONF_GROUP_NAME] = "group_name_invalid"
+    elif any(str(o[CONF_GROUP_NAME]).casefold() == name.casefold() for o in others):
+        errors[CONF_GROUP_NAME] = "group_name_duplicate"
+    if error := validate_energy_entity(hass, group.get(CONF_GROUP_ENERGY_ENTITY)):
+        errors[CONF_GROUP_ENERGY_ENTITY] = error
+    members = list(group.get(CONF_GROUP_MEMBERS) or [])
+    if not members:
+        errors[CONF_GROUP_MEMBERS] = "members_required"
+    else:
+        taken = {m for o in others for m in o.get(CONF_GROUP_MEMBERS, [])}
+        for member in members:
+            problem, _, _ = member_sources(hass, member)
+            if member in taken:
+                problem = "member_twice"
+            if problem:
+                errors[CONF_GROUP_MEMBERS] = problem
+                break
+    return errors
+
+
+def _normalize_group(user_input: dict[str, Any]) -> dict[str, Any]:
+    return {
+        CONF_GROUP_NAME: str(user_input.get(CONF_GROUP_NAME) or "").strip(),
+        CONF_GROUP_ENERGY_ENTITY: user_input.get(CONF_GROUP_ENERGY_ENTITY),
+        CONF_GROUP_MEMBERS: list(user_input.get(CONF_GROUP_MEMBERS) or []),
+    }
+
+
+class _HubSteps:
+    """Station page + one page per inverter group; shared by the config
+    flow and the hub's options flow."""
+
+    _station: str | None
+    _groups: list[dict[str, Any]]
+    _stored_groups: list[dict[str, Any]]
+
+    if TYPE_CHECKING:  # provided by ConfigFlow / OptionsFlow and the subclass
+        hass: HomeAssistant
+
+        def async_show_form(self, **kwargs: Any) -> ConfigFlowResult: ...
+
+        def _finish_hub(self) -> ConfigFlowResult: ...
+
+    async def _hub_station_step(self, step_id: str, user_input: dict[str, Any] | None, default: str | None):
+        from .learning_hub import validate_station_entity
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            station = user_input.get(CONF_STATION_ENTITY)
+            if error := validate_station_entity(self.hass, station):
+                errors[CONF_STATION_ENTITY] = error
+            else:
+                self._station = station
+                self._groups = []
+                return await self.async_step_hub_group()
+        return self.async_show_form(
+            step_id=step_id,
+            last_step=False,
+            data_schema=_station_schema((user_input or {}).get(CONF_STATION_ENTITY) or default),
+            errors=errors,
+        )
+
+    async def async_step_hub_group(self, user_input: dict[str, Any] | None = None):
+        from .learning_hub import validate_groups
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            group = _normalize_group(user_input)
+            errors = _validate_group(self.hass, group, self._groups)
+            if not errors:
+                self._groups.append(group)
+                if user_input.get(CONF_ADD_ANOTHER):
+                    return await self.async_step_hub_group()
+                if problem := validate_groups(self.hass, self._groups):
+                    self._groups.pop()
+                    errors[CONF_GROUP_MEMBERS] = problem
+                else:
+                    return self._finish_hub()
+        index = len(self._groups)
+        if user_input is not None and errors:
+            defaults = _normalize_group(user_input)
+            add_default = bool(user_input.get(CONF_ADD_ANOTHER))
+        elif index < len(self._stored_groups):
+            defaults = self._stored_groups[index]
+            add_default = index + 1 < len(self._stored_groups)
+        else:
+            defaults, add_default = {}, False
+        return self.async_show_form(
+            step_id="hub_group",
+            data_schema=_group_schema(self.hass, defaults, add_default),
+            description_placeholders={"group_number": str(index + 1)},
+            errors=errors,
+        )
+
+
+class OpenMeteoSolarForecastFlowHandler(_HubSteps, ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Open-Meteo Solar Forecast."""
 
     VERSION = 1
@@ -360,6 +530,9 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
         self._common: dict[str, Any] = {}
         self._local: dict[str, Any] = {}
         self._arrays: list[dict[str, Any]] = []
+        self._station: str | None = None
+        self._groups: list[dict[str, Any]] = []
+        self._stored_groups: list[dict[str, Any]] = []
 
     @staticmethod
     @callback
@@ -372,7 +545,19 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle the common settings."""
+        """Handle the common settings.
+
+        0.1.34: once a PV array exists and no learning hub does, the first
+        page is a menu: another PV array, or the learning hub.
+        """
+        if user_input is None and _array_entries(self.hass) and not _hub_exists(self.hass):
+            return self.async_show_menu(step_id="user", menu_options=["common", "learning_hub"])
+        return await self.async_step_common(user_input)
+
+    async def async_step_common(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The common settings of a PV array entry (form id stays "user")."""
         if user_input is not None:
             self._common = user_input
             self._arrays = []
@@ -417,6 +602,22 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
                     ),
                 }
             ),
+        )
+
+    async def async_step_learning_hub(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """0.1.34: the learning hub, page 1 (reference station)."""
+        await self.async_set_unique_id(LEARNING_HUB_UNIQUE_ID)
+        self._abort_if_unique_id_configured()
+        default = DEFAULT_STATION_ENTITY if self.hass.states.get(DEFAULT_STATION_ENTITY) else None
+        return await self._hub_station_step("learning_hub", user_input, default)
+
+    def _finish_hub(self) -> ConfigFlowResult:
+        return self.async_create_entry(
+            title=HUB_TITLE,
+            data={CONF_ENTRY_TYPE: ENTRY_TYPE_LEARNING_HUB},
+            options={CONF_STATION_ENTITY: self._station, CONF_GROUPS: self._groups},
         )
 
     async def async_step_local(
@@ -490,7 +691,7 @@ class OpenMeteoSolarForecastFlowHandler(ConfigFlow, domain=DOMAIN):
         )
 
 
-class OpenMeteoSolarForecastOptionFlowHandler(OptionsFlow):
+class OpenMeteoSolarForecastOptionFlowHandler(_HubSteps, OptionsFlow):
     """Handle options."""
 
     def __init__(self) -> None:
@@ -499,11 +700,31 @@ class OpenMeteoSolarForecastOptionFlowHandler(OptionsFlow):
         self._local: dict[str, Any] = {}
         self._arrays: list[dict[str, Any]] = []
         self._stored_arrays: list[dict[str, Any]] = []
+        self._station: str | None = None
+        self._groups: list[dict[str, Any]] = []
+        self._stored_groups: list[dict[str, Any]] = []
+
+    async def async_step_hub_station(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """0.1.34: hub options, page 1."""
+        options = self.config_entry.options
+        self._stored_groups = [dict(g) for g in options.get(CONF_GROUPS) or []]
+        return await self._hub_station_step("hub_station", user_input, options.get(CONF_STATION_ENTITY))
+
+    def _finish_hub(self) -> ConfigFlowResult:
+        return self.async_create_entry(
+            title="", data={CONF_STATION_ENTITY: self._station, CONF_GROUPS: self._groups}
+        )
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the common settings."""
+        from .runtime import is_hub_entry
+
+        if is_hub_entry(self.config_entry):
+            return await self.async_step_hub_station(user_input)
         if user_input is not None:
             self._common = user_input
             self._arrays = []
