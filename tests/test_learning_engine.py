@@ -28,17 +28,17 @@ NOON = datetime(2026, 10, 7, 11, 0, tzinfo=UTC)  # 13:00 local, sun ~ 33°
 K_NOON = L.hour_key(NOON)
 
 
-def pred(key=K_NOON, kt=0.6, kd=0.3, low=50.0, mid=10.0, high=0.0, temp=12.0, dew=8.0):
+def pred(key=K_NOON, kt=0.6, kd=0.3, low=50.0, mid=10.0, high=0.0, temp=12.0, dew=8.0, total=55.0):
     e0h, elev = L.hour_geometry(key, LAT, LON)
-    return L.Predictors(key, kt, kd, low, mid, high, temp, dew, elev, e0h)
+    return L.Predictors(key, kt, kd, low, mid, high, temp, dew, elev, e0h, total)
 
 
 def evidence(rows):
-    """rows: (hour, bucket, vector(5), err_kt, err_kd)."""
+    """rows: (hour, bucket, vector(6), err_kt, err_kd)."""
     return L.Evidence(
         hours=np.array([r[0] for r in rows], dtype=np.int64),
         buckets=np.array([r[1] for r in rows], dtype=np.int64),
-        x=np.array([r[2] for r in rows], dtype=float).reshape(-1, 5),
+        x=np.array([r[2] for r in rows], dtype=float).reshape(-1, len(L.PREDICTOR_NAMES)),
         err_kt=np.array([r[3] for r in rows], dtype=float),
         err_kd=np.array([r[4] for r in rows], dtype=float),
     )
@@ -86,9 +86,9 @@ def test_weather_layers_validated_and_missing_stays_missing():
     now = NOON
     raw = [
         {"datetime": "2026-10-07T11:00:00+00:00", "cloud_coverage_low": 40, "cloud_coverage_mid": 10,
-         "cloud_coverage_high": 0, "temperature": 12.0, "dew_point": 8.0},
+         "cloud_coverage_high": 0, "cloud_coverage": 45, "temperature": 12.0, "dew_point": 8.0},
         {"datetime": "2026-10-07T12:00:00+00:00", "cloud_coverage_low": 120, "temperature": 13.0,
-         "dew_point": 15.0},  # low out of range; mid/high missing; dew > temp
+         "dew_point": 15.0, "cloud_coverage": -3},  # low/total out of range; mid/high missing; dew > temp
         {"datetime": "2026-10-07T13:00:00+00:00"},
         "junk",
         {"datetime": "2026-11-30T00:00:00+00:00", "cloud_coverage_low": 1},  # outside window
@@ -96,9 +96,9 @@ def test_weather_layers_validated_and_missing_stays_missing():
     ]
     instants, rejected = L.parse_weather_layers(raw, "°C", now)
     assert rejected == 3
-    assert instants[int(datetime(2026, 10, 7, 11, tzinfo=UTC).timestamp())] == (40.0, 10.0, 0.0, 12.0, 8.0)
-    assert instants[int(datetime(2026, 10, 7, 12, tzinfo=UTC).timestamp())] == (None, None, None, 13.0, None)
-    assert instants[int(datetime(2026, 10, 7, 13, tzinfo=UTC).timestamp())] == (None,) * 5
+    assert instants[int(datetime(2026, 10, 7, 11, tzinfo=UTC).timestamp())] == (40.0, 10.0, 0.0, 12.0, 8.0, 45.0)
+    assert instants[int(datetime(2026, 10, 7, 12, tzinfo=UTC).timestamp())] == (None, None, None, 13.0, None, None)
+    assert instants[int(datetime(2026, 10, 7, 13, tzinfo=UTC).timestamp())] == (None,) * 6
 
 
 def test_weather_layers_fahrenheit_and_size_bound():
@@ -113,9 +113,9 @@ def test_weather_layers_fahrenheit_and_size_bound():
 
 def test_hour_layers_mean_of_both_ends_or_one():
     a = K_NOON
-    instants = {a: (10.0, 20.0, None, 10.0, 6.0), a + 3600: (30.0, None, None, 12.0, 8.0)}
-    assert L.hour_layers(instants, a) == (20.0, 20.0, None, 11.0, 7.0)
-    assert L.hour_layers(instants, a + 3600) == (30.0, None, None, 12.0, 8.0)
+    instants = {a: (10.0, 20.0, None, 10.0, 6.0, 40.0), a + 3600: (30.0, None, None, 12.0, 8.0, None)}
+    assert L.hour_layers(instants, a) == (20.0, 20.0, None, 11.0, 7.0, 40.0)
+    assert L.hour_layers(instants, a + 3600) == (30.0, None, None, 12.0, 8.0, None)
 
 
 def _values(ghi=300.0, dhi=100.0, sun=5.0, lw=320.0, refl=50.0, temp=10.0):
@@ -183,14 +183,14 @@ def test_predictors_require_sun_and_all_weather_fields():
     night = L.hour_key(datetime(2026, 10, 7, 1, tzinfo=UTC))
     records = {L.key_to_dt(k): _record(k) for k in (K_NOON, K_NOON + 3600, night)}
     records[L.key_to_dt(night)] = HourRecord(start=L.key_to_dt(night), ghi=0.0, dni=0.0, dhi=0.0)
-    full = (40.0, 10.0, 5.0, 12.0, 8.0)
-    instants = {K_NOON: full, K_NOON + 3600: full, K_NOON + 7200: (None, 10.0, 5.0, 12.0, 8.0),
+    full = (40.0, 10.0, 5.0, 12.0, 8.0, 45.0)
+    instants = {K_NOON: full, K_NOON + 3600: full, K_NOON + 7200: (None, 10.0, 5.0, 12.0, 8.0, 45.0),
                 night: full, night + 3600: full}
     preds = L.build_predictors(records, instants, LAT, LON)
     assert set(preds) == {K_NOON, K_NOON + 3600}  # night: sun < 5°
     p = preds[K_NOON]
     assert p.kt == pytest.approx(0.6) and p.kd == pytest.approx(0.3)
-    assert list(p.vector()) == pytest.approx([0.6, p.elevation, 40.0, 10.0, 4.0])
+    assert list(p.vector()) == pytest.approx([0.6, p.elevation, 40.0, 10.0, 4.0, 45.0])
     del instants[K_NOON + 3600]
     del instants[K_NOON + 7200]
     assert K_NOON + 3600 not in L.build_predictors(records, instants, LAT, LON)
@@ -214,7 +214,7 @@ def test_archive_keeps_latest_issue_per_bucket_and_skips_elapsed_or_far_hours():
 
 
 def replace_kt(p, kt):
-    return L.Predictors(p.key, kt, p.kd, p.low, p.mid, p.high, p.temp, p.dew, p.elevation, p.e0h)
+    return L.Predictors(p.key, kt, p.kd, p.low, p.mid, p.high, p.temp, p.dew, p.elevation, p.e0h, p.total)
 
 
 # ---------------------------------------------------------------------------
@@ -258,8 +258,8 @@ def test_neighbouring_buckets_are_pooled_when_the_own_bucket_is_thin():
 def test_distance_limit_and_k_limit():
     p = pred()
     v = np.array(p.vector())
-    far = list(v + np.array([0.151, 0, 0, 0, 0]))  # 1.51 scale units
-    near = list(v + np.array([0.149, 0, 0, 0, 0]))
+    far = list(v + np.array([0.151, 0, 0, 0, 0, 0]))  # 1.51 scale units
+    near = list(v + np.array([0.149, 0, 0, 0, 0, 0]))
     c = L.analog_correction(evidence([(K_NOON, 1, far, -0.2, 0.0)] * 30), p, 1)
     assert c.analogs == 0 and c.shift_kt == 0.0
     c = L.analog_correction(evidence([(K_NOON, 1, near, -0.2, 0.0)] * 30), p, 1)
@@ -284,8 +284,9 @@ def test_shift_bounds():
 
 
 def test_recency_and_season_weights():
-    w = L.recency_weight(np.array([0.0, 56.0, 365.0, 365.0]), 280, np.array([280, 280, 280, 320]))
-    assert list(w) == pytest.approx([1.0, 0.5, 0.5, 0.5 ** (365 / 56)])
+    w = L.recency_weight(np.array([0.0, 90.0, 365.0, 365.0, 200.0]), 280, np.array([280, 280, 280, 330, 100]))
+    # half-life 90 d; same season a year earlier (±45 d) >= 0.7; never below 0.1
+    assert list(w) == pytest.approx([1.0, 0.5, 0.7, 0.1, 0.5 ** (200 / 90)])
 
 
 # ---------------------------------------------------------------------------
@@ -318,21 +319,21 @@ def test_evidence_only_from_days_decided_before_the_cutoff():
     assert L.build_evidence(data, decided + 1, TZ).size == 0
 
 
-def test_evidence_older_than_380_days_is_not_used():
+def test_evidence_older_than_740_days_is_not_used():
     data = L.LearningData()
     p = pred()
     data.archive_forecast({K_NOON: p}, {}, NOON - timedelta(hours=10))
     _station(data, K_NOON, 0.4)
     _decide(data, "2026-10-07", int((NOON + timedelta(hours=14)).timestamp()))
-    assert L.build_evidence(data, int((NOON + timedelta(days=379)).timestamp()), TZ).size == 1
-    assert L.build_evidence(data, int((NOON + timedelta(days=381)).timestamp()), TZ).size == 0
+    assert L.build_evidence(data, int((NOON + timedelta(days=739)).timestamp()), TZ).size == 1
+    assert L.build_evidence(data, int((NOON + timedelta(days=741)).timestamp()), TZ).size == 0
 
 
 def test_predictors_are_rounded_once_so_stored_equals_used():
     rec = HourRecord(start=NOON, ghi=412.123456789, dni=300.0, dhi=133.987654321)
-    full = (40.1234567, 10.7654321, 5.0, 12.3456789, 8.7654321)
+    full = (40.1234567, 10.7654321, 5.0, 12.3456789, 8.7654321, 44.4444444)
     p = L.build_predictors({NOON: rec}, {K_NOON: full, K_NOON + 3600: full}, LAT, LON)[K_NOON]
-    for value in (p.kt, p.kd, p.low, p.mid, p.temp, p.dew, p.elevation, p.e0h):
+    for value in (p.kt, p.kd, p.low, p.mid, p.temp, p.dew, p.elevation, p.e0h, p.total):
         assert round(value, 6) == value
     data = L.LearningData()
     data.archive_forecast({K_NOON: p}, {}, NOON - timedelta(hours=1))
@@ -397,12 +398,19 @@ def test_apply_shift_exactly():
 def test_apply_stage2_factor_by_bin_of_the_shifted_kt():
     rec = _record(K_NOON, kt=0.6, kd=0.3)
     e0h, _ = L.hour_geometry(K_NOON, LAT, LON)
-    stage2 = {"overcast": {"factor": 0.9}, "broken": {"factor": 1.1}, "clear": {"factor": 1.0}}
+    stage2 = {"overcast_warm": {"factor": 0.9}, "broken_warm": {"factor": 1.1}, "clear_warm": {"factor": 1.0},
+              "broken_hot": {"factor": 0.95}, "broken_cool": {"factor": 1.05}}
     out, _ = L.apply_corrections({rec.start: rec}, {K_NOON: (-0.1, 0.0)}, stage2, LAT, LON)
-    assert out[rec.start].ghi == pytest.approx(0.55 * e0h, abs=2e-3)  # 0.5 -> broken -> x1.1
+    assert out[rec.start].ghi == pytest.approx(0.55 * e0h, abs=2e-3)  # 0.5 -> broken, no temperature -> warm
+    # cell temperature = forecast air temperature + 0.0342 x corrected light (0.5 * e0h)
+    hot_air = L.STAGE2_TEMP_EDGES[1] - L.CELL_HEATING_K_PER_W_M2 * 0.5 * e0h + 0.01
+    out, _ = L.apply_corrections({rec.start: rec}, {K_NOON: (-0.1, 0.0)}, stage2, LAT, LON, {K_NOON: hot_air})
+    assert out[rec.start].ghi == pytest.approx(0.475 * e0h, abs=2e-3)  # hot band -> x0.95
+    out, _ = L.apply_corrections({rec.start: rec}, {K_NOON: (-0.1, 0.0)}, stage2, LAT, LON, {K_NOON: hot_air - 0.02})
+    assert out[rec.start].ghi == pytest.approx(0.55 * e0h, abs=2e-3)  # just below: warm
     out, _ = L.apply_corrections({rec.start: rec}, {K_NOON: (0.0, 0.0)}, stage2, LAT, LON)
     assert out[rec.start] is rec  # clear bin factor 1, no shift
-    stage2["clear"]["factor"] = 99  # out-of-bounds factor is clamped
+    stage2["clear_warm"]["factor"] = 99  # out-of-bounds factor is clamped
     out, _ = L.apply_corrections({rec.start: rec}, {K_NOON: (0.0, 0.0)}, stage2, LAT, LON)
     assert out[rec.start].ghi == pytest.approx(min(0.6 * L.STAGE2_MAX, 1.0) * e0h, abs=2e-3)
 
@@ -453,13 +461,19 @@ def test_stage2_factor_by_hand():
     _decide(data, day, int(now.timestamp()) - 10)
     result = L.stage2_factors(data, "10K", now, TZ, LAT, LON)
     n = len(hours)
-    assert result["overcast"]["hours"] == n
-    assert result["overcast"]["ratio"] == pytest.approx(0.5)
-    assert result["overcast"]["factor"] == pytest.approx(max(1 - 0.5 * n / (n + 40), L.STAGE2_MIN), abs=1e-4)
-    assert result["clear"] == {"factor": 1.0, "ratio": 1.0, "hours": 0, "production_kwh": 0.0, "model_kwh": 0.0}
+    assert set(result) == set(L.STAGE2_CELLS) and len(result) == 9
+    cell = result["overcast_cool"]  # 10 °C air + little light -> cool band
+    assert cell["hours"] == n
+    assert cell["ratio"] == pytest.approx(0.5)
+    assert cell["factor"] == pytest.approx(max(1 - 0.5 * n / (n + 40), L.STAGE2_MIN), abs=1e-4)
+    assert result["clear_warm"] == {"factor": 1.0, "ratio": 1.0, "hours": 0, "production_kwh": 0.0, "model_kwh": 0.0}
+    assert result["overcast_warm"]["hours"] == 0 and result["overcast_hot"]["hours"] == 0
+    # hours the geometry darkens by more than 10 % are left out; exactly 10 % stays in
+    data.d["model_free"]["10K"] = {hours[0]: 2.0 / 0.89, hours[1]: 2.0 / 0.9, hours[2]: 2.0}
+    assert L.stage2_factors(data, "10K", now, TZ, LAT, LON)["overcast_cool"]["hours"] == n - 1
     # an excluded day contributes nothing
     _decide(data, day, int(now.timestamp()) - 10, "snow")
-    assert L.stage2_factors(data, "10K", now, TZ, LAT, LON)["overcast"]["hours"] == 0
+    assert L.stage2_factors(data, "10K", now, TZ, LAT, LON)["overcast_cool"]["hours"] == 0
 
 
 def test_stage2_bounds():
@@ -473,7 +487,9 @@ def test_stage2_bounds():
     # instead give a huge ratio: the bound applies even with few hours.
     now = datetime(2026, 10, 8, 2, tzinfo=UTC)
     _decide(data, day, int(now.timestamp()) - 10)
-    assert L.stage2_factors(data, "g", now, TZ, LAT, LON)["clear"]["factor"] == L.STAGE2_MAX
+    result = L.stage2_factors(data, "g", now, TZ, LAT, LON)
+    clear = [result[c] for c in L.STAGE2_CELLS if c.startswith("clear_") and result[c]["hours"]]
+    assert clear and all(item["factor"] == L.STAGE2_MAX for item in clear)
 
 
 # ---------------------------------------------------------------------------
@@ -710,8 +726,10 @@ def test_round_trip_through_json():
         lambda d: d["station_hours"].update({"abc": [0] * 7}),
         lambda d: d["days"].update({"2026-13-01": {"decided": 1, "status": "ok"}}),
         lambda d: d["days"]["2026-10-07"].update(status="great"),
-        lambda d: d["stage2"]["groups"].update({"g": {"overcast": {"factor": 3}, "broken": {"factor": 1},
-                                                     "clear": {"factor": 1}}}),
+        lambda d: d["stage2"]["groups"].update({"g": {"overcast": {"factor": 1}, "broken": {"factor": 1},
+                                                     "clear": {"factor": 1}}}),  # old 3-cell shape
+        lambda d: d["stage2"]["groups"].update(
+            {"g": {c: {"factor": 3 if c == "broken_hot" else 1} for c in L.STAGE2_CELLS}}),  # out of bounds
         lambda d: d.update(state={"state": "dancing"}),
         lambda d: d.update(state="x"),
         lambda d: d["production"].update({"g": {"1": True}}),
@@ -731,14 +749,14 @@ def test_non_mapping_store_is_rejected():
         L.LearningData.from_json([1, 2])
 
 
-def test_purge_keeps_400_days():
+def test_purge_keeps_760_days():
     data = _populated()
-    later = NOON + timedelta(days=401)
+    later = NOON + timedelta(days=761)
     data.purge(later, TZ)
     assert data.d["archive"] == {} and data.d["station_hours"] == {} and data.d["days"] == {}
     assert data.d["production"]["10K"] == {} and data.d["issue6"] == {}
     data = _populated()
-    data.purge(NOON + timedelta(days=399), TZ)
+    data.purge(NOON + timedelta(days=759), TZ)
     assert K_NOON in data.d["archive"]
 
 
@@ -777,7 +795,7 @@ def _simulate(days, bias=-0.2, seed=1):
                 continue
             kt = rng.uniform(0.2, 0.75)
             low = rng.choice([0.0, 10.0, 80.0, 95.0])
-            preds[k] = L.Predictors(k, kt, 0.3, low, rng.uniform(0, 30), 0.0, 12.0, 8.0, elev, e0h)
+            preds[k] = L.Predictors(k, kt, 0.3, low, rng.uniform(0, 30), 0.0, 12.0, 8.0, elev, e0h, min(low + 10, 100))
             kt_m = max(kt + (bias if low > 50 else 0.0) + rng.gauss(0, 0.02), 0.02)
             data.d["station_hours"][k] = [kt_m * e0h, 0.3 * kt_m * e0h, 0.0, 300.0, 20.0, 12.0, 6.0]
         corr = L.compute_corrections(data, preds, issue, TZ)
@@ -793,8 +811,8 @@ def test_learner_recovers_a_low_cloud_bias_and_leaves_clear_hours_alone():
     key = L.hour_key(day0 + timedelta(hours=10))
     e0h, elev = L.hour_geometry(key, LAT, LON)
     ev = L.build_evidence(data, int(issue.timestamp()), TZ)
-    foggy = L.analog_correction(ev, L.Predictors(key, 0.6, 0.3, 90.0, 10.0, 0.0, 12.0, 8.0, elev, e0h), 1)
-    clear = L.analog_correction(ev, L.Predictors(key, 0.6, 0.3, 5.0, 10.0, 0.0, 12.0, 8.0, elev, e0h), 1)
+    foggy = L.analog_correction(ev, L.Predictors(key, 0.6, 0.3, 90.0, 10.0, 0.0, 12.0, 8.0, elev, e0h, 100.0), 1)
+    clear = L.analog_correction(ev, L.Predictors(key, 0.6, 0.3, 5.0, 10.0, 0.0, 12.0, 8.0, elev, e0h, 15.0), 1)
     assert foggy.mean_error_kt == pytest.approx(-0.2, abs=0.03)
     assert foggy.shift_kt == pytest.approx(foggy.shrink * foggy.mean_error_kt)
     assert foggy.shift_kt < -0.1
@@ -858,7 +876,7 @@ def test_hours_with_the_sun_below_five_degrees_get_no_predictors():
     assert low_sun  # the sunrise hour
     key = low_sun[0]
     rec = HourRecord(start=L.key_to_dt(key), ghi=20.0, dni=50.0, dhi=15.0)
-    full = (40.0, 10.0, 5.0, 12.0, 8.0)
+    full = (40.0, 10.0, 5.0, 12.0, 8.0, 45.0)
     assert L.build_predictors({rec.start: rec}, {key: full, key + 3600: full}, LAT, LON) == {}
 
 
@@ -900,3 +918,124 @@ def test_a_record_is_replaced_only_by_one_at_least_as_complete():
     assert data.add_station_sample(corrected)  # same completeness: newer wins
     assert data.d["station_samples"][K_NOON + 600][0] == 101.0
     assert not data.add_station_sample(corrected)
+
+
+
+# ---------------------------------------------------------------------------
+# 0.1.34.2: total cloud, temperature bands, long memory, migration
+# ---------------------------------------------------------------------------
+
+
+def test_hours_without_total_cloud_get_no_predictors():
+    rec = _record(K_NOON)
+    no_total = (40.0, 10.0, 5.0, 12.0, 8.0, None)
+    assert L.build_predictors({rec.start: rec}, {K_NOON: no_total, K_NOON + 3600: no_total}, LAT, LON) == {}
+
+
+def test_low_cloud_separates_analogs_at_equal_total_cloud():
+    """Fog (low cloud) and high veil can have the same total cover."""
+    p = pred(low=80.0, total=80.0)
+    v = list(p.vector())
+    far = [v[0], v[1], 80.0 - 38.0, v[3], v[4], v[5]]  # 38 % less low cloud: 1.52 scale units
+    near = [v[0], v[1], 80.0 - 37.0, v[3], v[4], v[5]]
+    assert L.analog_correction(evidence([(K_NOON, 1, far, -0.2, 0.0)] * 30), p, 1).analogs == 0
+    assert L.analog_correction(evidence([(K_NOON, 1, near, -0.2, 0.0)] * 30), p, 1).analogs == 25
+
+
+def test_total_cloud_separates_analogs():
+    p = pred(total=90.0)
+    v = list(p.vector())
+    far = v[:5] + [90.0 - 46.0]  # 46 % less total cloud: 1.53 scale units
+    near = v[:5] + [90.0 - 44.0]
+    assert L.analog_correction(evidence([(K_NOON, 1, far, -0.2, 0.0)] * 30), p, 1).analogs == 0
+    assert L.analog_correction(evidence([(K_NOON, 1, near, -0.2, 0.0)] * 30), p, 1).analogs == 25
+
+
+@pytest.mark.parametrize(("temp", "cell"), [(None, "broken_warm"), (-3.0, "broken_cool"), (24.99, "broken_cool"),
+                                            (25.0, "broken_warm"), (44.99, "broken_warm"), (45.0, "broken_hot")])
+def test_stage2_cells_by_cell_temperature(temp, cell):
+    assert L.stage2_cell(0.45, temp) == cell
+
+
+def test_cell_temperature_follows_sunlight_not_only_air():
+    assert L.cell_temperature(20.0, 900.0) == pytest.approx(20.0 + 0.0342 * 900.0)  # clear: ~ +31 K
+    assert L.cell_temperature(20.0, 150.0) == pytest.approx(20.0 + 0.0342 * 150.0)  # overcast: ~ +5 K
+    assert L.cell_temperature(20.0, -5.0) == 20.0
+    assert L.cell_temperature(None, 900.0) is None
+    # same air temperature, different sky -> different band
+    assert L.stage2_cell(0.75, L.cell_temperature(20.0, 900.0)) == "clear_hot"
+    assert L.stage2_cell(0.2, L.cell_temperature(20.0, 140.0)) == "overcast_cool"
+
+
+@pytest.mark.parametrize(("modelled", "unshaded", "shaded"), [
+    (0.89, 1.0, True), (0.9, 1.0, False), (1.0, 1.0, False), (0.5, None, False), (0.0, 0.0, False)])
+def test_shaded_hour(modelled, unshaded, shaded):
+    assert L.shaded_hour(modelled, unshaded) is shaded
+
+
+def test_stage2_keeps_a_season_learned_long_ago():
+    """A hot-day factor learned ten months ago still counts (weight >= 0.1)."""
+    data = L.LearningData()
+    summer = "2026-07-15"
+    for k in _day_hours_with_sun(summer, 10.0):
+        e0h, _ = L.hour_geometry(k, LAT, LON)
+        data.d["station_hours"][k] = [0.7 * e0h, 0.2 * 0.7 * e0h, 60.0, 300.0, 30.0, 28.0, 6.0]
+        data.d["production"].setdefault("g", {})[k] = 0.9
+        data.d["model"].setdefault("g", {})[k] = 1.0
+    _decide(data, summer, int(datetime(2026, 7, 16, 2, tzinfo=UTC).timestamp()))
+    later = datetime(2027, 5, 15, 2, tzinfo=UTC)  # ten months later
+    result = L.stage2_factors(data, "g", later, TZ, LAT, LON)
+    cells = [result[c] for c in L.STAGE2_CELLS if result[c]["hours"]]
+    assert sum(c["hours"] for c in cells) >= 8 and result["clear_hot"]["hours"] >= 4
+    for cell in cells:
+        n = cell["hours"]
+        assert cell["ratio"] == pytest.approx(0.9)
+        assert cell["factor"] == pytest.approx(1 - 0.1 * n / (n + 40), abs=1e-4)
+
+
+def test_store_of_schema_1_is_migrated_keeping_measurements():
+    raw = json.loads(json.dumps(_populated().to_json()))
+    raw["schema"] = 1
+    for buckets in raw["archive"].values():
+        for row in buckets.values():
+            row.pop()  # schema-1 rows had no total cloud
+    raw["stage2"]["groups"] = {"10K": {"overcast": {"factor": 1.0}, "broken": {"factor": 1.0}, "clear": {"factor": 1.0}}}
+    migrated = L.LearningData.from_json(raw)
+    assert migrated.migrated_from == 1 and migrated.d["schema"] == 2
+    assert migrated.d["archive"] == {} and migrated.d["issue6"] == {} and migrated.d["gate"] is None
+    assert migrated.d["station_hours"] and migrated.d["production"]["10K"] and migrated.d["days"]
+    assert migrated.d["events"]  # kept
+    assert migrated.d["model"]["10K"] and migrated.d["model_free"] == {}
+    assert L.LearningData.from_json(json.loads(json.dumps(_populated().to_json()))).migrated_from is None
+
+
+def test_retention_is_two_years():
+    data = _populated()
+    data.d["model_free"]["10K"] = {K_NOON: 1.5}
+    data.purge(NOON + timedelta(days=700), TZ)
+    assert K_NOON in data.d["archive"] and data.d["production"]["10K"] and data.d["model_free"]["10K"]
+    data.purge(NOON + timedelta(days=761), TZ)
+    assert data.d["archive"] == {} and data.d["model_free"]["10K"] == {}
+
+
+def test_stage2_weights_old_hours_with_the_floor_by_hand():
+    """Ratio = Σw·production / Σw·model; w = max(0.5^(age/90 d), 0.1)."""
+    data = L.LearningData()
+    now = datetime(2026, 10, 8, 2, tzinfo=UTC)
+    expected = [0.0, 0.0]
+    hours = 0
+    for day, produced in (("2025-09-01", 0.8), ("2026-10-07", 1.0)):  # 400 days old (floor) and recent
+        for k in _day_hours_with_sun(day, 10.0):
+            e0h, _ = L.hour_geometry(k, LAT, LON)
+            data.d["station_hours"][k] = [0.2 * e0h, 0.06 * e0h, 0.0, 300.0, 5.0, 0.0, 6.0]  # overcast, cold
+            data.d["production"].setdefault("g", {})[k] = produced
+            data.d["model"].setdefault("g", {})[k] = 1.0
+            w = max(0.5 ** ((now.timestamp() - k) / 86400 / 90), 0.1)
+            expected[0] += w * produced
+            expected[1] += w
+            hours += 1
+        _decide(data, day, int(now.timestamp()) - 10)
+    cell = L.stage2_factors(data, "g", now, TZ, LAT, LON)["overcast_cool"]
+    assert cell["hours"] == hours
+    assert cell["ratio"] == pytest.approx(expected[0] / expected[1], abs=1e-4)
+    assert cell["ratio"] < 0.99  # the old day still counts (without the floor it would be ~0.991)

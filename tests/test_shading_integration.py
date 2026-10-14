@@ -438,3 +438,27 @@ def test_unreadable_and_oversized_files_give_messages(tmp_path):
     binary = tmp_path / "bin.txt"
     binary.write_bytes(b"\xff\xfe\x00")
     assert "cannot be read" in shading_provider.validate_shading_file(str(binary))
+
+
+async def test_learning_model_rerun_with_and_without_shading(hass, zurich, freezer, tmp_path):
+    """0.1.34.2: the stage-2 re-run can leave the geometry out, so the hub
+    can tell shaded hours from unshaded ones."""
+    freezer.move_to(NOW)
+    FakeFusion(hass).publish(HOUR0)
+    plain, _ = await _setup(hass, LOCAL_OPTIONS)
+    assert not _coordinator(hass, plain).has_shading
+    table = morning_shade_table(tmp_path / "shade.txt")
+    shaded, _ = await _setup(hass, {**LOCAL_OPTIONS, CONF_SHADING_FILEPATH: str(table)})
+    coordinator = _coordinator(hass, shaded)
+    assert coordinator.has_shading
+    snapshot = await coordinator.local_reader.async_snapshot()
+    args = (dict(snapshot.hours), dict(snapshot.temperatures_c), snapshot.utc_offset_seconds)
+    with_geometry = await coordinator.async_model_hours(*args)
+    without = await coordinator.async_model_hours(*args, shading=False)
+    plain_model = await _coordinator(hass, plain).async_model_hours(*args)
+    assert without == pytest.approx(plain_model)
+    tomorrow = dt_util.as_local(NOW).date() + timedelta(days=1)
+    keys = {dt_util.as_local(dt_util.utc_from_timestamp(k)).hour: k for k in without
+            if dt_util.as_local(dt_util.utc_from_timestamp(k)).date() == tomorrow}
+    assert with_geometry[keys[9]] < 0.7 * without[keys[9]]
+    assert with_geometry[keys[15]] == pytest.approx(without[keys[15]], rel=1e-6)

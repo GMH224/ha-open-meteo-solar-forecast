@@ -441,6 +441,28 @@ async def test_corrupt_store_starts_neutral_and_is_reported(hass, hass_storage, 
     assert any(e[1] == "store_corrupt" for e in hub.data.d["events"])
 
 
+async def test_store_from_0_1_34_1_is_migrated_and_keeps_switch_and_measurements(hass, hass_storage, zurich, freezer):
+    key = L.hour_key(HOUR0)
+    old = L.LearningData()
+    raw = json.loads(json.dumps(old.to_json()))
+    raw["schema"], raw["algorithm"] = 1, 1
+    raw["settings"]["apply"] = True
+    raw["station_hours"] = {str(key): [400.0, 120.0, 60.0, 300.0, 40.0, 12.0, 6.0]}
+    raw["production"] = {"10K": {str(key): 3.2}}
+    raw["model"] = {"10K": {str(key): 3.0}}
+    raw["archive"] = {str(key): {"1": [0] * 15}}
+    raw["stage2"]["groups"] = {"10K": {n: {"factor": 1.0} for n in ("overcast", "broken", "clear")}}
+    hass_storage[LEARNING_STORAGE_KEY] = {"version": 1, "minor_version": 1, "key": LEARNING_STORAGE_KEY, "data": raw}
+    _, _, _, hub = await basic(hass, freezer)
+    assert hub.store_fault is None
+    assert hub.data.apply_switch  # the owner's switch survives
+    assert hub.data.d["station_hours"][key][0] == 400.0 and hub.data.d["production"]["10K"][key] == 3.2
+    assert hub.data.d["archive"].get(key) is None or 1 not in hub.data.d["archive"][key]
+    kinds = [e[1] for e in hub.data.d["events"]]
+    assert "migrated" in kinds and "algorithm_changed" in kinds
+    assert hub.data.d["schema"] == L.STORE_SCHEMA_VERSION and hub.data.d["algorithm"] == L.ALGORITHM_VERSION
+
+
 async def test_configuration_problem_pauses_without_touching_forecasts(hass, zurich, freezer):
     freezer.move_to(NOW)
     fake = Fake(hass)
@@ -860,3 +882,49 @@ async def test_startup_keeps_its_own_report_and_sets_since(hass, zurich, freezer
     assert "forecast" in hub.last_hourly  # the hourly report did not overwrite it
     attributes = hass.states.get("sensor.solar_forecast_learning_last_run").attributes
     assert attributes["startup"]["station_backfill"] == "0 samples, 0 hours"
+
+
+async def test_model_rerun_stores_the_unshaded_model_too(hass, zurich, freezer, monkeypatch):
+    """0.1.34.2: the nightly re-run keeps the model without shading, so
+    stage 2 can leave out hours the geometry darkens."""
+    _, array, _, hub = await basic(hass, freezer)
+    coordinator = array.runtime_data
+    yesterday = (NOW.astimezone(hub.tz).date() - timedelta(days=1)).isoformat()
+    for key in L.local_day_hours(yesterday, hub.tz):
+        e0h, elev = L.hour_geometry(key, LAT, LON)
+        if elev >= L.MIN_ELEVATION_DEG:
+            ghi = 0.5 * e0h
+            hub.data.d["station_hours"][key] = [ghi, 0.4 * ghi, 20.0, 330.0, 0.1 * ghi, 10.0, 6.0]
+    # without shading tables: one model run, both maps equal
+    assert not coordinator.has_shading
+    calls = []
+    original = coordinator.async_model_hours
+
+    async def counting(records, temps, offset, shading=True):
+        calls.append(shading)
+        return await original(records, temps, offset, shading)
+
+    monkeypatch.setattr(coordinator, "async_model_hours", counting)
+    await hub._async_update_model(NOW)
+    model, free = hub.data.d["model"]["10K"], hub.data.d["model_free"]["10K"]
+    assert model and model == free and False not in calls
+    # with shading: a second run without it; shaded hours stay below the free ones
+    for name in ("model", "model_free"):
+        hub.data.d[name]["10K"] = {}
+    calls.clear()
+
+    async def shaded(records, temps, offset, shading=True):
+        calls.append(shading)
+        hourly = await original(records, temps, offset, shading)
+        return {k: v * 0.5 for k, v in hourly.items()} if shading else hourly
+
+    monkeypatch.setattr(coordinator, "async_model_hours", shaded)
+    monkeypatch.setattr(type(coordinator), "has_shading", property(lambda self: True))
+    await hub._async_update_model(NOW)
+    model, free = hub.data.d["model"]["10K"], hub.data.d["model_free"]["10K"]
+    assert calls.count(False) >= 1 and any(v > 0 for v in free.values())
+    assert all(model[k] == pytest.approx(0.5 * free[k], abs=1e-5) for k in free)
+    # a store from before 0.1.34.2 (model but no unshaded model) gets it filled
+    hub.data.d["model_free"]["10K"] = {}
+    await hub._async_update_model(NOW)
+    assert hub.data.d["model_free"]["10K"] == free

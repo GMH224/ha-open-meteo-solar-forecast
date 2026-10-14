@@ -78,6 +78,7 @@ class Replay:
         self.season_age = p["season_min_age_days"]
         self.season_win = p["season_window_days"]
         self.season_floor = p["season_floor"]
+        self.recency_floor = p["recency_floor"]
         self.max_kt = p["max_shift_kt"]
         self.max_kd = p["max_shift_kd"]
         self.max_age = p["evidence_max_age_days"]
@@ -94,7 +95,8 @@ class Replay:
                 "bucket": BUCKETS.index(item["lead_bucket"]),
                 "issued": _ts(item["issued_utc"]),
                 "x": [float(item["kt"]), float(item["elevation"]), float(item["low"]),
-                      max(float(item["mid"]), float(item["high"])), float(item["temp"]) - float(item["dew"])],
+                      max(float(item["mid"]), float(item["high"])), float(item["temp"]) - float(item["dew"]),
+                      float(item["total"])],
                 "kt": float(item["kt"]),
                 "kd": float(item["kd"]),
                 "e0h": float(item["e0h"]),
@@ -147,7 +149,7 @@ class Replay:
         return datetime.fromtimestamp(ts, timezone.utc).timetuple().tm_yday
 
     def recency(self, age: float, target_doy: int, ev_doy: int) -> float:
-        weight = 0.5 ** (age / self.half)
+        weight = max(0.5 ** (age / self.half), self.recency_floor)
         diff = abs(ev_doy - target_doy)
         diff = min(diff, 365 - diff)
         if age >= self.season_age and diff <= self.season_win:

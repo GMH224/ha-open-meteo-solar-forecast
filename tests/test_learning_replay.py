@@ -50,7 +50,7 @@ def simulate(days: int, seed: int = 2, freeze_day: int | None = None, reset_day:
                     continue
                 low = rng.choice([0.0, 15.0, 70.0, 95.0])
                 values = [rng.uniform(0.2, 0.75), 0.3, low, rng.uniform(0, 40), 0.0, 12.0, rng.uniform(4, 11),
-                          elev, e0h]
+                          elev, e0h, min(low + rng.uniform(0, 30), 100.0)]
                 preds[k] = L.Predictors(k, *[round(v, 6) for v in values])
                 truth.setdefault(k, (preds[k].kt, low))
             corr = L.compute_corrections(data, preds, issue, TZ)
