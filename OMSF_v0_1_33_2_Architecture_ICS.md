@@ -19,6 +19,12 @@ documents [`omsf_v0.1.34_release_audit.md`](omsf_v0.1.34_release_audit.md),
 [`omsf_v0_1_34_ICS_quality_bug_testing_report.md`](omsf_v0_1_34_ICS_quality_bug_testing_report.md);
 user reference: README, section *Learning from experience*.
 
+**0.1.34.2:** total cloud as a sixth predictor; stage 2 by sky type × estimated
+cell temperature (9 cells), heavily shaded hours (> 10 % geometry loss) left out
+via an unshaded model re-run; two-year memory (retention 760 d, half-life 90 d,
+floor 0.1, season floor 0.7); store schema 2 with migration (F27). Audit
+`omsf_v0.1.34.2_release_audit.md`, tests `omsf_v0_1_34_2_ICS_quality_bug_testing_report.md`.
+
 **Why.** Cloudy-day errors are mainly weather-forecast errors (fog/stratus;
 6–11 Oct 2026: −21 % … +106 % per day, clear days ±1 %). They are
 systematic for recognisable situations, so they can be learned — provided
@@ -71,7 +77,8 @@ export in the executor; recorder access only via the recorder's executor.
 | F23 | Station not representative (14-day correlation < 0.85) | state `paused`, forecast raw |
 | F24 | Member entry removed or switched to Open-Meteo / sources differ | state `paused` (configuration), forecast raw |
 | F25 | Learning store unreadable or malformed | copy kept as `.corrupt-<time>`, neutral start, event |
-| F26 | Store above 8 MB | oldest 30-day blocks dropped, event |
+| F26 | Store above 16 MB (8 MB before 0.1.34.2) | oldest 30-day blocks dropped, event |
+| F27 | Learning store of schema 1 (before 0.1.34.2) | migrated at start: measurements, production, models, day decisions, settings and events kept; forecast archive, 06:00 records and stage 2 dropped; gate restarts; event `migrated` |
 
 **New limitations.** L-L1 hours beyond 54 h lead are never corrected (in
 hybrid mode Fusion days 3–5 stay raw); L-L2 a single station 8 km away is

@@ -72,6 +72,12 @@ suite before changing the pin.**
     actions take the hub lock; the recorder is used only through
     `get_instance(hass).async_add_executor_job`. New and changed modules
     must pass `mypy` (`mypy.ini`) without new findings.
+12. The learning store is versioned (`learning.STORE_SCHEMA_VERSION`).
+    A change to the stored shape bumps it and adds a migration in
+    `LearningData._from_json` that keeps every measurement it can
+    (station hours, production, models, day decisions; 0.1.34.2: schema 1
+    → 2, M211, M212, M217). Never discard measured data to simplify a
+    migration: the owner relies on two years of memory for the seasons.
 
 ## Running the tests
 

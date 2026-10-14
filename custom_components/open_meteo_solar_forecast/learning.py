@@ -65,10 +65,12 @@ from .local_source import (
 # Parameters (all documented in the specification, section in brackets)
 # --------------------------------------------------------------------------
 
-ALGORITHM_VERSION = 1
+ALGORITHM_VERSION = 2
+"""2 (0.1.34.2): total cloud as a predictor; stage 2 by sky type and
+temperature band over all stored data; longer memory."""
 """Bumped whenever a change alters corrections; the gate restarts (§9)."""
 
-STORE_SCHEMA_VERSION = 1
+STORE_SCHEMA_VERSION = 2  # 2: archive rows carry total cloud (1 is migrated)
 
 HOUR_S = 3600
 DAY_S = 86400
@@ -81,18 +83,23 @@ lead 0. Hours beyond 54 h are not archived and never corrected."""
 MIN_ELEVATION_DEG = 5.0  # hours learned from / corrected (§3)
 STAGE2_MIN_ELEVATION_DEG = 10.0  # (§6)
 
-PREDICTOR_NAMES = ("kt", "elevation", "low", "mid_high", "spread")
-PREDICTOR_SCALES = np.array([0.10, 10.0, 25.0, 30.0, 2.0])  # (§4)
+PREDICTOR_NAMES = ("kt", "elevation", "low", "mid_high", "spread", "total")
+PREDICTOR_SCALES = np.array([0.10, 10.0, 25.0, 30.0, 2.0, 30.0])  # (§4; total cloud 0.1.34.2)
 
 K_NEIGHBOURS = 25
 MAX_DISTANCE = 1.5
 MIN_ANALOGS = 8
 DISTANCE_EPS = 0.2
 SHRINK_N0 = 10.0
-RECENCY_HALF_LIFE_DAYS = 56.0
+RECENCY_HALF_LIFE_DAYS = 90.0
+RECENCY_FLOOR = 0.1
+"""0.1.34.2 (owner: keep learned data long enough for seasons): older
+evidence weighs less, halving every 3 months, but never below 10 %."""
 SEASON_MIN_AGE_DAYS = 300.0
-SEASON_WINDOW_DAYS = 30.0
-SEASON_FLOOR = 0.5
+SEASON_WINDOW_DAYS = 45.0
+SEASON_FLOOR = 0.7
+"""Evidence from the same season a year (or more) earlier, ±45 days of day
+of year, weighs at least 70 %."""
 MAX_SHIFT_KT = 0.35
 MAX_SHIFT_KD = 0.5
 KD_MIN = 0.05
@@ -123,7 +130,17 @@ STATION_FIELDS = tuple(STATION_RANGES)
 
 STAGE2_BIN_EDGES = (0.3, 0.6)
 STAGE2_BIN_NAMES = ("overcast", "broken", "clear")
-STAGE2_WINDOW_DAYS = 56
+CELL_HEATING_K_PER_W_M2 = 0.0342
+"""Ross coefficient, the same the forecast library uses for its cell
+temperature (``Tc = Ta + k * G``). Here applied to horizontal irradiance,
+only to choose the calibration band (approximation, spec §6)."""
+STAGE2_TEMP_EDGES = (25.0, 45.0)  # °C estimated cell temperature
+STAGE2_TEMP_NAMES = ("cool", "warm", "hot")
+STAGE2_CELLS = tuple(f"{sky}_{band}" for sky in STAGE2_BIN_NAMES for band in STAGE2_TEMP_NAMES)
+"""0.1.34.2: 9 cells per inverter group (sky type x cell-temperature band)."""
+STAGE2_SHADE_MAX_LOSS = 0.10
+"""Hours in which the shading geometry removes more than this share of the
+modelled energy are left out of stage 2 (spec §6)."""
 STAGE2_N0 = 40.0
 STAGE2_MIN = 0.85
 STAGE2_MAX = 1.15
@@ -147,15 +164,15 @@ SNOW_ALBEDO = 0.4
 SNOW_MIN_GHI = 100.0
 COUNTER_STEP_FACTOR = 1.2
 
-RETENTION_DAYS = 400
-EVIDENCE_MAX_AGE_DAYS = 380
+RETENTION_DAYS = 760
+EVIDENCE_MAX_AGE_DAYS = 740
 """Evidence older than this (relative to the cutoff) is not used. Smaller
 than the retention, so a correction never depends on data the retention
 has already removed: the export can reproduce recent corrections exactly."""
 PRECISION = 6  # decimals of every stored predictor (stored = used)
 EVENT_LOG_MAX = 500
 HISTORY_MAX = 90
-STORE_MAX_BYTES = 8 * 1024 * 1024
+STORE_MAX_BYTES = 16 * 1024 * 1024  # two years ≈ 4–6 MB
 MAX_GROUPS = 8
 
 DAY_OK = "ok"
@@ -177,7 +194,7 @@ STATES = (STATE_COLLECTING, STATE_SHADOW, STATE_ELIGIBLE, STATE_APPLIED, STATE_P
 # Archive row layout (lists keep the store compact).
 ROW_FIELDS = (
     "issued", "kt", "kd", "low", "mid", "high", "temp", "dew", "elevation", "e0h",
-    "shift_kt", "shift_kd", "shrink", "analogs", "pooled",
+    "shift_kt", "shift_kd", "shrink", "analogs", "pooled", "total",
 )
 R = {name: i for i, name in enumerate(ROW_FIELDS)}
 
@@ -234,6 +251,28 @@ def stage2_bin(kt: float) -> int:
     if kt < STAGE2_BIN_EDGES[1]:
         return 1
     return 2
+
+
+def cell_temperature(air_temp: float | None, ghi: float) -> float | None:
+    """Estimated module temperature: air temperature plus heating by the
+    sunlight (Ross). None when the air temperature is unknown."""
+    if air_temp is None:
+        return None
+    return air_temp + CELL_HEATING_K_PER_W_M2 * max(ghi, 0.0)
+
+
+def stage2_cell(kt: float, temp: float | None) -> str:
+    """Calibration cell: sky type from kt, band from the estimated cell
+    temperature (unknown temperature counts as the middle band)."""
+    if temp is None:
+        band = 1
+    elif temp < STAGE2_TEMP_EDGES[0]:
+        band = 0
+    elif temp < STAGE2_TEMP_EDGES[1]:
+        band = 1
+    else:
+        band = 2
+    return f"{STAGE2_BIN_NAMES[stage2_bin(kt)]}_{STAGE2_TEMP_NAMES[band]}"
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -300,7 +339,7 @@ def parse_weather_layers(
 ) -> tuple[dict[int, tuple[float | None, ...]], int]:
     """Validate ``weather.get_forecasts`` (hourly) for the learner.
 
-    Returns ``({instant_ts: (low, mid, high, temp_c, dew_c)}, rejected)``.
+    Returns ``({instant_ts: (low, mid, high, temp_c, dew_c, total)}, rejected)``.
     A missing or invalid layer is ``None`` (Fusion: missing = no forecast,
     never 0). Same size and time-window bounds as the irradiance series.
     """
@@ -327,7 +366,9 @@ def parse_weather_layers(
         dew = _temperature_c(item.get("dew_point"), unit_norm)
         if dew is not None and temp is not None and dew > temp + 0.5:
             dew = None  # physically impossible; treat as missing
-        result[int(when.timestamp())] = (*layers, temp, dew)
+        total = _to_float(item.get("cloud_coverage"))
+        total = total if total is not None and 0.0 <= total <= 100.0 else None
+        result[int(when.timestamp())] = (*layers, temp, dew, total)
     return result, rejected
 
 
@@ -338,7 +379,7 @@ def hour_layers(
     the two ends; one end alone if the other is absent."""
     ends = [instants.get(key), instants.get(key + HOUR_S)]
     out: list[float | None] = []
-    for index in range(5):
+    for index in range(6):
         values: list[float] = [v for end in ends if end is not None and (v := end[index]) is not None]
         out.append(sum(values) / len(values) if values else None)
     return tuple(out)
@@ -457,10 +498,11 @@ class Predictors:
     dew: float
     elevation: float
     e0h: float
+    total: float
 
     def vector(self) -> np.ndarray:
         return np.array(
-            [self.kt, self.elevation, self.low, max(self.mid, self.high), self.temp - self.dew]
+            [self.kt, self.elevation, self.low, max(self.mid, self.high), self.temp - self.dew, self.total]
         )
 
 
@@ -481,11 +523,11 @@ def build_predictors(
         e0h, elevation = hour_geometry(key, latitude, longitude)
         if elevation < MIN_ELEVATION_DEG or e0h <= 0:
             continue
-        low, mid, high, temp, dew = hour_layers(instants, key)
-        if low is None or mid is None or high is None or temp is None or dew is None:
+        low, mid, high, temp, dew, total = hour_layers(instants, key)
+        if low is None or mid is None or high is None or temp is None or dew is None or total is None:
             continue
         kt, kd = clearness(ghi, dhi, e0h)
-        values = [round(v, PRECISION) for v in (kt, kd, low, mid, high, temp, dew, elevation, e0h)]
+        values = [round(v, PRECISION) for v in (kt, kd, low, mid, high, temp, dew, elevation, e0h, total)]
         result[key] = Predictors(key, *values)
     return result
 
@@ -493,7 +535,7 @@ def build_predictors(
 def predictors_from_row(key: int, row: list[Any]) -> Predictors:
     return Predictors(
         key, row[R["kt"]], row[R["kd"]], row[R["low"]], row[R["mid"]], row[R["high"]],
-        row[R["temp"]], row[R["dew"]], row[R["elevation"]], row[R["e0h"]],
+        row[R["temp"]], row[R["dew"]], row[R["elevation"]], row[R["e0h"]], row[R["total"]],
     )
 
 
@@ -516,7 +558,8 @@ def _new_data() -> dict[str, Any]:
         "issue6": {},  # date -> {"captured": ts, "hours": {hour: [kt, kt_c, kd, kd_c, e0h]}}
         "entry_days": {},  # date -> {entry_id: {"captured": ts, "raw": wh, "corr": wh}}
         "production": {},  # group -> {hour: kwh}
-        "model": {},  # group -> {hour: kwh}
+        "model": {},  # group -> {hour: kwh}, station light through the shaded model
+        "model_free": {},  # group -> {hour: kwh}, same without shading (0.1.34.2)
         "days": {},  # date -> {"decided": ts, "status": str, "details": {...}}
         "stage2": {"computed": None, "algorithm": ALGORITHM_VERSION, "groups": {}},
         "stage2_history": [],
@@ -533,6 +576,23 @@ def _new_data() -> dict[str, Any]:
 
 class LearningDataError(ValueError):
     """The stored learning data is malformed."""
+
+
+def _migrate_1_to_2(raw: dict[str, Any]) -> dict[str, Any]:
+    """0.1.34.2: archive rows gain total cloud and stage 2 gains temperature
+    bands. Archived forecasts and the 06:00 records cannot be completed, so
+    they are dropped; measurements, production, models, day decisions,
+    settings and the event log are kept. The gate restarts (new algorithm)."""
+    out = dict(raw)
+    out["schema"] = 2
+    out["archive"] = {}
+    out["issue6"] = {}
+    out["entry_days"] = {}
+    out["stage2"] = {"computed": None, "algorithm": ALGORITHM_VERSION, "groups": {}}
+    out["stage2_history"] = []
+    out["gate"] = None
+    out["model_free"] = {}  # filled for the last days by the next nightly run
+    return out
 
 
 def _require(condition: bool, message: str) -> None:
@@ -573,6 +633,7 @@ class LearningData:
 
     def __init__(self, raw: dict[str, Any] | None = None) -> None:
         self.d = _new_data() if raw is None else raw
+        self.migrated_from: int | None = None
 
     # -- (de)serialisation ------------------------------------------------
 
@@ -588,6 +649,9 @@ class LearningData:
     @classmethod
     def _from_json(cls, raw: Any) -> LearningData:
         _require(isinstance(raw, dict), "root is not a mapping")
+        migrated = raw.get("schema") == 1
+        if migrated:
+            raw = _migrate_1_to_2(raw)
         _require(raw.get("schema") == STORE_SCHEMA_VERSION, "unknown schema version")
         data = _new_data()
         for key in data:
@@ -622,7 +686,7 @@ class LearningData:
                 _require(0 <= index < len(LEAD_BUCKETS), "archive bucket")
                 archive[k][index] = _finite_list(row, len(ROW_FIELDS), "archive row", allow_none=False)
         data["archive"] = archive
-        for group_map in ("production", "model"):
+        for group_map in ("production", "model", "model_free"):
             _require(isinstance(data[group_map], dict), group_map)
             converted = {}
             for group, hours in data[group_map].items():
@@ -661,7 +725,7 @@ class LearningData:
         _require(isinstance(data["stage2"], dict) and isinstance(data["stage2"].get("groups"), dict), "stage2")
         for group, bins in data["stage2"]["groups"].items():
             _require(isinstance(bins, dict), "stage2 group")
-            for name in STAGE2_BIN_NAMES:
+            for name in STAGE2_CELLS:
                 item = bins.get(name)
                 _require(isinstance(item, dict), "stage2 bin")
                 factor = item.get("factor")
@@ -670,7 +734,9 @@ class LearningData:
                     "stage2 factor out of bounds",
                 )
         _require(data["state"].get("state") in STATES, "state")
-        return cls(data)
+        result = cls(data)
+        result.migrated_from = 1 if migrated else None
+        return result
 
     def to_json(self) -> dict[str, Any]:
         d = self.d
@@ -681,7 +747,7 @@ class LearningData:
             str(k): {str(b): row for b, row in sorted(buckets.items())}
             for k, buckets in sorted(d["archive"].items())
         }
-        for group_map in ("production", "model"):
+        for group_map in ("production", "model", "model_free"):
             out[group_map] = {
                 group: {str(k): v for k, v in sorted(hours.items())}
                 for group, hours in d[group_map].items()
@@ -704,7 +770,7 @@ class LearningData:
         for key in ("archive", "station_hours", "days", "issue6", "settings"):
             d[key] = dict(self.d[key])
         d["entry_days"] = {day: dict(entries) for day, entries in self.d["entry_days"].items()}
-        for key in ("production", "model"):
+        for key in ("production", "model", "model_free"):
             d[key] = {group: dict(hours) for group, hours in self.d[key].items()}
         d["freeze"] = [list(interval) for interval in self.d["freeze"]]
         d["resets"] = [list(item) for item in self.d["resets"]]
@@ -821,7 +887,7 @@ class LearningData:
             row = [
                 now_ts, pred.kt, pred.kd, pred.low, pred.mid, pred.high, pred.temp, pred.dew,
                 pred.elevation, pred.e0h, corr.shift_kt, corr.shift_kd, corr.shrink,
-                corr.analogs, 1 if corr.pooled else 0,
+                corr.analogs, 1 if corr.pooled else 0, pred.total,
             ]
             self.d["archive"].setdefault(key, {})[bucket] = [
                 round(v, 6) if isinstance(v, float) else v for v in row
@@ -849,7 +915,7 @@ class LearningData:
             for key in [k for k in self.d[name] if k < limit]:
                 del self.d[name][key]
                 removed += 1
-        for name in ("production", "model"):
+        for name in ("production", "model", "model_free"):
             for hours in self.d[name].values():
                 for key in [k for k in hours if k < limit]:
                     del hours[key]
@@ -904,7 +970,7 @@ class Evidence:
 
     hours: np.ndarray  # int64 hour keys
     buckets: np.ndarray  # int
-    x: np.ndarray  # (n, 5) predictor vectors
+    x: np.ndarray  # (n, len(PREDICTOR_NAMES)) predictor vectors
     err_kt: np.ndarray
     err_kd: np.ndarray
 
@@ -953,14 +1019,14 @@ def build_evidence(data: LearningData, cutoff: int, tz: tzinfo) -> Evidence:
     return Evidence(
         hours=np.array(hours, dtype=np.int64),
         buckets=np.array(buckets, dtype=np.int64),
-        x=np.array(rows, dtype=float).reshape(-1, 5),
+        x=np.array(rows, dtype=float).reshape(-1, len(PREDICTOR_NAMES)),
         err_kt=np.array(ekt, dtype=float),
         err_kd=np.array(ekd, dtype=float),
     )
 
 
 def recency_weight(age_days: np.ndarray, target_doy: int, evidence_doy: np.ndarray) -> np.ndarray:
-    weight = np.power(0.5, age_days / RECENCY_HALF_LIFE_DAYS)
+    weight = np.maximum(np.power(0.5, age_days / RECENCY_HALF_LIFE_DAYS), RECENCY_FLOOR)
     diff = np.abs(evidence_doy - target_doy)
     diff = np.minimum(diff, 365 - diff)
     season = (age_days >= SEASON_MIN_AGE_DAYS) & (diff <= SEASON_WINDOW_DAYS)
@@ -1058,10 +1124,10 @@ def _adjust(kt: float, kd: float, shift_kt: float, shift_kd: float, factor: floa
     return _clamp(kt_c * factor, 0.0, CLEARNESS_INDEX_MAX), kd_c
 
 
-def stage2_factor_for(stage2: Mapping[str, Any] | None, kt: float) -> float:
+def stage2_factor_for(stage2: Mapping[str, Any] | None, kt: float, temp: float | None = None) -> float:
     if not stage2:
         return 1.0
-    item = stage2.get(STAGE2_BIN_NAMES[stage2_bin(kt)])
+    item = stage2.get(stage2_cell(kt, temp))
     if not isinstance(item, Mapping):
         return 1.0
     return float(_clamp(float(item.get("factor", 1.0)), STAGE2_MIN, STAGE2_MAX))
@@ -1073,6 +1139,7 @@ def apply_corrections(
     stage2: Mapping[str, Any] | None,
     latitude: float,
     longitude: float,
+    temps: Mapping[int, float] | None = None,
 ) -> tuple[dict[datetime, HourRecord], dict[str, Any]]:
     """Return corrected copies of the hour records.
 
@@ -1096,7 +1163,9 @@ def apply_corrections(
             continue
         kt, kd = clearness(raw_ghi, raw_dhi, e0h)
         kt_shifted = _clamp(kt + shift[0], 0.0, CLEARNESS_INDEX_MAX)
-        factor = stage2_factor_for(stage2, kt_shifted)
+        factor = stage2_factor_for(
+            stage2, kt_shifted, cell_temperature((temps or {}).get(key), kt_shifted * e0h)
+        )
         if shift[0] == 0.0 and shift[1] == 0.0 and factor == 1.0:
             out[start] = record
             continue
@@ -1149,6 +1218,14 @@ def apply_corrections(
 # --------------------------------------------------------------------------
 
 
+def shaded_hour(modelled: float, unshaded: float | None) -> bool:
+    """True when the geometry removes more than STAGE2_SHADE_MAX_LOSS of the
+    hour's modelled energy. Unknown (no unshaded value) counts as unshaded."""
+    if unshaded is None or unshaded <= 0:
+        return False
+    return modelled < (1.0 - STAGE2_SHADE_MAX_LOSS) * unshaded
+
+
 def stage2_factors(
     data: LearningData,
     group: str,
@@ -1157,15 +1234,24 @@ def stage2_factors(
     latitude: float,
     longitude: float,
 ) -> dict[str, dict[str, float]]:
-    """Calibration factor per measured-kt bin over the last 8 weeks (§6)."""
+    """Calibration factor per cell (sky type × cell-temperature band, §6).
+
+    0.1.34.2: all stored hours are used (retention 2 years), weighted by
+    age like stage 1 (half-life 90 days, never below 10 %), so a cell
+    learned last summer keeps its factor until new evidence changes it.
+    Shrinkage counts the hours of the cell, not their weights. Hours the
+    shading geometry darkens by more than STAGE2_SHADE_MAX_LOSS are left
+    out, so a geometry error does not spread to unshaded hours.
+    """
     now_ts = int(now.timestamp())
     cutoff = data.evidence_cutoff(now_ts)
     production = data.d["production"].get(group, {})
     model = data.d["model"].get(group, {})
-    sums = [[0.0, 0.0, 0] for _ in STAGE2_BIN_NAMES]
+    model_free = data.d["model_free"].get(group, {})
+    sums = {cell: [0.0, 0.0, 0, 0.0, 0.0] for cell in STAGE2_CELLS}  # w·prod, w·model, n, prod, model
     day_ok: dict[str, bool] = {}
     for key, modelled in model.items():
-        if key < now_ts - STAGE2_WINDOW_DAYS * DAY_S or key >= now_ts:
+        if key >= now_ts:
             continue
         produced = production.get(key)
         meas = data.d["station_hours"].get(key)
@@ -1176,19 +1262,24 @@ def stage2_factors(
             day_ok[day] = usable_day(data, day, cutoff, "stage2")
         if not day_ok[day]:
             continue
+        if shaded_hour(modelled, model_free.get(key)):
+            continue
         e0h, elevation = hour_geometry(key, latitude, longitude)
         if elevation < STAGE2_MIN_ELEVATION_DEG:
             continue
         kt_m, _ = clearness(meas[H["ghi"]], meas[H["dhi"]] or 0.0, e0h)
-        item = sums[stage2_bin(kt_m)]
-        item[0] += produced
-        item[1] += modelled
+        weight = max(0.5 ** ((now_ts - key) / DAY_S / RECENCY_HALF_LIFE_DAYS), RECENCY_FLOOR)
+        item = sums[stage2_cell(kt_m, cell_temperature(meas[H["temp"]], meas[H["ghi"]]))]
+        item[0] += weight * produced
+        item[1] += weight * modelled
         item[2] += 1
+        item[3] += produced
+        item[4] += modelled
     result = {}
-    for name, (produced, modelled, n) in zip(STAGE2_BIN_NAMES, sums, strict=True):
-        ratio = produced / modelled if modelled > 0.05 else 1.0
+    for cell, (w_produced, w_modelled, n, produced, modelled) in sums.items():
+        ratio = w_produced / w_modelled if w_modelled > 0.05 else 1.0
         factor = 1.0 + (ratio - 1.0) * n / (n + STAGE2_N0)
-        result[name] = {
+        result[cell] = {
             "factor": round(_clamp(factor, STAGE2_MIN, STAGE2_MAX), 4),
             "ratio": round(ratio, 4),
             "hours": n,
@@ -1558,11 +1649,13 @@ def export_production_csv(data: LearningData, year: int) -> str:
             continue
         row: list[Any] = [key_to_dt(key).isoformat()]
         for group in groups:
-            row += [data.d["production"].get(group, {}).get(key), data.d["model"].get(group, {}).get(key)]
+            row += [data.d["production"].get(group, {}).get(key), data.d["model"].get(group, {}).get(key),
+                    data.d["model_free"].get(group, {}).get(key)]
         rows.append(row)
     header = ["hour_utc"]
     for group in groups:
-        header += [f"{group}_production_kwh", f"{group}_model_from_station_kwh"]
+        header += [f"{group}_production_kwh", f"{group}_model_from_station_kwh",
+                   f"{group}_model_unshaded_kwh"]
     return _csv(rows, header)
 
 
@@ -1592,6 +1685,7 @@ def export_settings(data: LearningData, groups: Iterable[GroupInfo], tz: tzinfo,
             "season_min_age_days": SEASON_MIN_AGE_DAYS,
             "season_window_days": SEASON_WINDOW_DAYS,
             "season_floor": SEASON_FLOOR,
+            "recency_floor": RECENCY_FLOOR,
             "max_shift_kt": MAX_SHIFT_KT,
             "max_shift_kd": MAX_SHIFT_KD,
             "evidence_max_age_days": EVIDENCE_MAX_AGE_DAYS,

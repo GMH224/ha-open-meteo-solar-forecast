@@ -773,14 +773,16 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         records: dict[datetime, HourRecord],
         temperatures: dict[datetime, float],
         utc_offset_seconds: int,
+        shading: bool = True,
     ) -> dict[int, float]:
         """Energy per UTC hour (Wh) this entry's model gives for *measured*
         irradiance (learning stage 2, 0.1.34). A separate library instance,
-        so the live forecast object is never touched."""
+        so the live forecast object is never touched. ``shading=False``
+        leaves the shading geometry out (0.1.34.2: shaded-hour check)."""
         if not self.uses_local:
             raise LocalDataError("entry does not use the local weather source")
         forecast = LocalOpenMeteoSolarForecast(**self._forecast_kwargs)
-        if self._active_shading:
+        if shading and self._active_shading:
             forecast.shading_tables = self._active_shading
             forecast.shading_hass = self.hass
         snapshot = LocalSnapshot(
@@ -798,6 +800,11 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             ts = int(moment.timestamp())
             result[ts - ts % 3600] = float(wh)
         return result
+
+    @property
+    def has_shading(self) -> bool:
+        """True when at least one array of this entry has a valid shading table."""
+        return bool(self._active_shading)
 
     @staticmethod
     def _ensure_not_empty(estimate: Estimate) -> None:

@@ -80,7 +80,7 @@ neutral (shift 0) by construction.
 - **kd (diffuse fraction):** DHI ÷ GHI.
 - **Hours learned from:** only hours with mean sun elevation ≥ 5°.
 
-## 4. Predictors (6) and distance
+## 4. Predictors and distance
 
 | # | Predictor | Scale (1 unit of distance) |
 |---|---|---|
@@ -89,7 +89,12 @@ neutral (shift 0) by construction.
 | 3 | low cloud | 25 % |
 | 4 | max(mid, high) cloud | 30 % |
 | 5 | T − Td spread | 2 K |
-| 6 | lead time bucket | *filter, not distance*: `0–6 h`, `6–18 h`, `18–30 h`, `30–54 h` |
+| 6 | total cloud (0.1.34.2) | 30 % |
+| — | lead time bucket | *filter, not distance*: `0–6 h`, `6–18 h`, `18–30 h`, `30–54 h` |
+
+**Total cloud (0.1.34.2, owner).** Some models behind Fusion give only total
+cloud, so the layers are less reliable than the total. An hour without total
+cloud gets no correction, like an hour without layers.
 
 - **Distance** d = √Σ((xᵢ − yᵢ)/scaleᵢ)².
 - **Candidates:** only past hours in the same lead bucket. If there are fewer than 8 candidates within d ≤ 1.5, the two neighbouring buckets are pooled and a flag `pooled` is set.
@@ -98,7 +103,11 @@ neutral (shift 0) by construction.
 
 **Weights.**
 - Per analog: w = 1/(d + 0.2) · recency.
-- **Recency:** a half-life of 8 weeks. Hours from the same season one year earlier (±30 days of day-of-year) get a recency floor of 0.5, so last year counts next autumn.
+- **Recency (0.1.34.2, owner: "keep data long enough for seasonality"):** a
+  half-life of 90 days, never below 0.1. Hours from the same season one year
+  or more earlier (±45 days of day-of-year, age ≥ 300 days) keep at least
+  0.7, so last autumn counts fully next autumn. Before 0.1.34.2: 8 weeks,
+  ±30 days, floor 0.5.
 - **Neighbours:** K = 25 nearest.
 
 ## 5. Stage 1 — weather correction
@@ -137,23 +146,43 @@ orientation matter less, which the physics then handles correctly.
    library, in local mode with a synthetic `HourRecord` list.
 2. The result is summed per inverter group: 10K = West + South, 5K = East.
 
-**Learned factor.**
-- c_g(b) = Σ measured DC energy / Σ modelled energy over the last 8 weeks.
-- Measured kt bins b: `< 0.3` overcast, `0.3–0.6` broken, `> 0.6` clear.
+**Learned factor (0.1.34.2).**
+- Nine cells per group: sky type × cell-temperature band.
+  - Sky type from the measured kt: `< 0.3` overcast, `0.3–0.6` broken, `≥ 0.6` clear.
+  - Estimated cell temperature Tc = T_air + 0.0342 K·m²/W × GHI (the Ross
+    coefficient the library itself uses, here on horizontal light, only to
+    choose the band): `< 25 °C` cool, `25–45 °C` warm, `≥ 45 °C` hot.
+  - Physics (owner, 14 Oct): cells heat with the sunlight on them, not with
+    air temperature alone; clear midday ≈ +31 K, overcast ≈ +5 K. UV is
+    3–5 % of the energy and not the driver, so it is not used. The panel's
+    thermal time constant (5–10 min) is inside the hour, so the previous
+    hour is not used either.
+  - The library already derates for cell temperature (−0.4 %/K); the cell
+    factor learns what its generic constants miss on this roof.
+- c_g(cell) = Σ w·measured energy / Σ w·modelled energy over **all stored
+  hours** (up to 2 years), w = max(0.5^(age/90 d), 0.1). A cell learned last
+  summer keeps its factor through the winter.
 - Only hours with elevation ≥ 10° count.
+- **Shaded hours left out (0.1.34.2):** the nightly re-run also computes the
+  model without the shading geometry. Hours in which the geometry removes
+  more than 10 % of the energy are not used, so an error of the approximate
+  3D model (winter is not yet verified) cannot spread to unshaded hours.
+  Hours from before 0.1.34.2 without an unshaded value count as unshaded;
+  the next nightly run fills the last 10 days.
 
 **Shrinkage and bounds.**
-- The applied factor is 1 + (c − 1)·n/(n + 40), with n = hours in the bin.
+- The applied factor is 1 + (c − 1)·n/(n + 40), with n = hours in the cell
+  (not their weights).
 - It is bounded to 0.85…1.15.
-- It is applied to the power (W and Wh) of every entry in the group, for the
-  bin of the hour's corrected kt′.
+- It is applied to every entry in the group, for the cell of the hour's
+  corrected kt′ and the forecast air temperature plus the corrected light.
 
 **Why per bin.** On clear hours the factor should be ≈ 1; the efficiency
 settings were fitted there. A factor ≠ 1 on overcast hours measures what the
 physics misses at low light (IAM, low-irradiance efficiency, spectral).
 Those are exactly the effects the owner suspected.
 
-**Report, not hidden.** The clear-sky bin factor is *also* shown as
+**Report, not hidden.** The clear/warm cell factor is *also* shown as
 "suggested efficiency change". If it settles away from 1 (e.g. 0.96), the
 owner should change the efficiency setting rather than let the learner
 compensate forever.
@@ -183,12 +212,19 @@ A day or hour is excluded from learning, with a logged reason, when:
   - **Station hours:** GHI, DHI, sunshine, sky longwave, reflected,
     temperature, number of values.
   - **Production hours** per group.
-  - **Stage 2 model-from-station hours** per group.
+  - **Stage 2 model-from-station hours** per group, with and without shading.
   - **Event log:** ring of 500 entries.
   - **Model state:** algorithm version, frozen flag, gate state, Stage 2
     factors, last run.
-- **Retention:** 400 days (one full year plus margin). Expected size ≈ 1–2 MB; hard limit
-  8 MB. Beyond it, the oldest hours are dropped and an event is logged.
+- **Retention (0.1.34.2):** 760 days (two years plus margin), so a season is
+  seen twice; evidence up to 740 days old is used. Expected size ≈ 3–5 MB;
+  hard limit 16 MB. Beyond it, the oldest hours are dropped and an event is
+  logged. Before 0.1.34.2: 400 days, 8 MB.
+- **Schema 2 (0.1.34.2):** a store of schema 1 is migrated at start-up.
+  Station hours, production, models, day decisions, settings and the event
+  log are kept; the forecast archive and the 06:00 records (without total
+  cloud) and stage 2 (3 cells) are dropped; the gate restarts. Event
+  `migrated`.
 - **Corrupt or unreadable store:**
   1. The file is copied to `…learning.corrupt-<date>`.
   2. The learner starts neutral and logs an event.
@@ -389,4 +425,9 @@ The learner's value is on the days it learns are systematically misjudged.
 | 12 | — | station time: sensor state (timestamp); fallbacks: a time attribute, then `age_minutes` rounded to 10 min; states older than 60 min ignored | robust to Fusion attribute changes; reported in the state sensor |
 | 13 | — | production from recorder long-term statistics (hourly change, converted to kWh); 400 days backfilled at first run, then the last 10 days nightly | restarts never lose production data |
 | 15 | station values only from the latest record | 0.1.34.1: also every record of Fusion's `recent_values` (>= 0.3.5, last 6 h; merged by time, replaced only by an equally or more complete record; window 7 h, at most 100 entries); also read in the startup backfill | live system 13 Oct: about every second record never reached the state, so no hour reached 5 of 6 |
+| 16 | 5 predictors | 0.1.34.2: + total cloud (scale 30 %) | owner: some Fusion models give only total cloud |
+| 17 | recency 8 weeks, season ±30 d floor 0.5; stage 2 last 8 weeks; retention 400 d | 0.1.34.2: half-life 90 d, floor 0.1, season ±45 d floor 0.7; stage 2 over all stored hours with the same weights; retention 760 d, evidence ≤ 740 d, store ≤ 16 MB | owner: learned data must not be thrown away after weeks; seasons must be captured |
+| 18 | stage 2 bins by kt | 0.1.34.2: 9 cells, sky type × estimated cell temperature | owner: cell temperature drives efficiency; physics check: sunlight heats the cells, not UV; lag inside the hour |
+| 19 | — | 0.1.34.2: hours the shading geometry darkens by > 10 % left out of stage 2 (unshaded model stored per group-hour) | owner 14 Oct: approximate geometry accepted; winter unverified |
+| 20 | — | 0.1.34.2: store schema 2, migration from 1 (measurements kept) | rows gained total cloud |
 | 14 | — | Home Assistant platform: `ConfigEntry.runtime_data` owns coordinator / hub; `PARALLEL_UPDATES` (sensors 0, switches 1); owner actions serialised with the runs; every computation in the executor on a consistent copy of the data; recorder only through its own executor | explicit lifecycle ownership, deliberate concurrency (owner request, 13 Oct 2026) |

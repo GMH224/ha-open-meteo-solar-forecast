@@ -265,13 +265,22 @@ From that it learns two small corrections:
 
 1. **Weather (shared by all arrays):** for each coming hour it looks up the
    most similar past forecast situations (forecast clearness, sun height,
-   low cloud, mid/high cloud, temperature minus dew point, lead time) and how
-   wrong the forecast was then. The forecast light is shifted by their
+   low cloud, mid/high cloud, total cloud, temperature minus dew point, lead
+   time) and how wrong the forecast was then. The forecast light is shifted by their
    weighted mean error - shrunk towards zero when there are few or
    dissimilar past hours ("analog ensemble").
 2. **Calibration per inverter:** the model is re-run every night with the
-   *measured* station light; production divided by that model, separately
-   for overcast, broken and clear hours, gives a small factor (0.85-1.15).
+   *measured* station light; production divided by that model gives a small
+   factor (0.85-1.15) per sky type (overcast, broken, clear) and cell
+   temperature (cool < 25 °C, warm, hot >= 45 °C; estimated from air
+   temperature plus sunlight, as the panels heat up in the sun). Hours in
+   which your shading geometry removes more than 10 % are left out, so the
+   factor never compensates a geometry error.
+
+**Memory:** learned data are kept for two years. Recent weeks count most
+(the weight halves every 90 days, but never drops below 10 %), and the same
+season a year earlier keeps at least 70 %, so what was learned last autumn
+is used again next autumn.
 
 It **starts neutral** and changes your forecast only when **both** hold:
 the nightly skill check over the last 28 days shows the corrected 06:00
@@ -317,7 +326,7 @@ visible.
 **Export:** every night (03:30) and with the service
 `open_meteo_solar_forecast.export_learning`, all evidence, decisions and
 corrections are written as CSV/JSON to
-`/config/open_meteo_solar_forecast/export/` (fixed folder, 400 days).
+`/config/open_meteo_solar_forecast/export/` (fixed folder, two years).
 `tools/learning_replay.py <folder>` recomputes every correction from the
 export with an independent implementation.
 

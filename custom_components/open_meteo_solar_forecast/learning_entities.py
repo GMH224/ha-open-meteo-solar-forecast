@@ -150,13 +150,13 @@ def _stage2(hub: LearningHub, group: str | None) -> dict[str, Any]:
 
 
 def _calibration_value(hub: LearningHub, group: str | None) -> float | None:
-    item = _stage2(hub, group).get("overcast")
+    item = _stage2(hub, group).get("overcast_cool")
     return None if item is None else item["factor"]
 
 
 def _calibration_attributes(hub: LearningHub, group: str | None) -> dict[str, Any]:
     bins = _stage2(hub, group)
-    clear = bins.get("clear") or {}
+    clear = bins.get("clear_warm") or {}
     suggestion = None
     if clear.get("hours", 0) >= 40:
         suggestion = round((clear.get("ratio", 1.0) - 1.0) * 100, 1)

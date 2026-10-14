@@ -1,5 +1,39 @@
 # Changelog — GMH224 fork
 
+## 0.1.34.2 — 2026-10-14 — total cloud, cell temperature, two-year memory
+
+Design confirmed by the owner on 14 Oct 2026 (spec §4, §6, §8, §17 rows
+16–20). Release audit: `omsf_v0.1.34.2_release_audit.md`.
+
+### Changed (learning hub)
+- **Total cloud** is a sixth predictor of the weather correction (scale
+  30 %): some models behind Fusion give only total cloud.
+- **Calibration per inverter by sky type × cell temperature** (9 cells
+  instead of 3). Cell temperature is estimated as air temperature plus
+  0.0342 K·m²/W × sunlight (the panels heat up in the sun; UV is not the
+  driver and the thermal lag stays inside the hour).
+- **Shaded hours left out of the calibration:** the nightly model re-run also
+  computes the model without the shading geometry; hours in which the
+  geometry removes more than 10 % are not used.
+- **Two-year memory:** retention 760 days (was 400), evidence up to 740 days;
+  weight half-life 90 days (was 8 weeks), never below 10 %; the same season
+  a year earlier (±45 days) keeps at least 70 % (was ±30 days, 50 %). The
+  calibration uses all stored hours with the same weights (was the last
+  8 weeks). Store limit 16 MB (was 8 MB).
+- `Calibration <group>` sensor state: the overcast/cool cell; the efficiency
+  suggestion comes from the clear/warm cell.
+- Export: production file gains `<group>_model_unshaded_kwh`.
+
+### Fixed
+- The store-size trim was capped at 400 days; now tied to the retention.
+
+### Upgrade note
+- The learning store is migrated once (schema 1 → 2, event `migrated`).
+  Station hours, production, models, day decisions, the switches and the
+  event log are kept. The forecast archive (rows without total cloud), the
+  06:00 records and the old calibration are dropped, so the 28-day skill
+  check and the evidence count restart from the upgrade day.
+
 ## 0.1.34.1 — 2026-10-13 — every station record (Fusion 0.3.5)
 
 Release audit: `omsf_v0.1.34.1_release_audit.md`.

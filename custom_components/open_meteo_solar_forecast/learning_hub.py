@@ -371,6 +371,9 @@ class LearningHub:
         except L.LearningDataError as err:
             await self._async_quarantine(now, f"malformed: {sanitize_error(err)}")
             return
+        if self.data.migrated_from is not None:
+            self.data.event(now, "migrated", f"store {self.data.migrated_from} -> {L.STORE_SCHEMA_VERSION}: "
+                            "archived forecasts dropped (no total cloud); measurements and production kept")
         if self.data.d.get("algorithm") != L.ALGORITHM_VERSION:
             old = self.data.d.get("algorithm")
             self.data.d["algorithm"] = L.ALGORITHM_VERSION
@@ -614,9 +617,10 @@ class LearningHub:
             keys = [L.hour_key(start) for start in snapshot.hours]
             rows = self.data.latest_rows(keys)
             shifts = {key: L.correction_from_row(row) for key, row in rows.items()}
+            temps = {key: float(row[L.R["temp"]]) for key, row in rows.items()}
             stage2 = self.data.d["stage2"]["groups"].get(group.name)
             hours, summary = await self.hass.async_add_executor_job(
-                L.apply_corrections, snapshot.hours, shifts, stage2, self.latitude, self.longitude
+                L.apply_corrections, snapshot.hours, shifts, stage2, self.latitude, self.longitude, temps
             )
         except Exception as err:  # noqa: BLE001 - fail-safe: raw forecast
             LOGGER.warning("Learning correction failed, forecast stays raw: %s", sanitize_error(err))
@@ -898,8 +902,9 @@ class LearningHub:
             model_input = None
             for group in self.groups:
                 model = self.data.d["model"].setdefault(group.name, {})
+                model_free = self.data.d["model_free"].setdefault(group.name, {})
                 hours = L.local_day_hours(day, self.tz)
-                if any(k in model for k in hours):
+                if any(k in model for k in hours) and any(k in model_free for k in hours):
                     continue
                 if model_input is None:
                     model_input = self._model_input(day)
@@ -910,13 +915,21 @@ class LearningHub:
                 if not members or len(members) != len(group.members):
                     continue
                 total: dict[int, float] = {}
+                total_free: dict[int, float] = {}
                 for coordinator in members:
                     hourly = await coordinator.async_model_hours(records, temps, utc_offset)
+                    hourly_free = (
+                        await coordinator.async_model_hours(records, temps, utc_offset, shading=False)
+                        if coordinator.has_shading else hourly
+                    )
                     for key, wh in hourly.items():
                         total[key] = total.get(key, 0.0) + wh
+                    for key, wh in hourly_free.items():
+                        total_free[key] = total_free.get(key, 0.0) + wh
                 for start in records:
                     key = L.hour_key(start)
                     model[key] = round(total.get(key, 0.0) / 1000.0, 5)
+                    model_free[key] = round(total_free.get(key, 0.0) / 1000.0, 5)
                 computed.append(f"{group.name} {day}")
         return f"{len(computed)} group-days" if computed else "nothing to do"
 
@@ -954,7 +967,7 @@ class LearningHub:
         # to_json() in the event loop (consistent copy), serialising in the executor.
         size = len(await self.hass.async_add_executor_job(json.dumps, self.data.to_json()))
         trimmed = 0
-        while size > L.STORE_MAX_BYTES and trimmed < 400:
+        while size > L.STORE_MAX_BYTES and trimmed < L.RETENTION_DAYS:
             self.data.trim_oldest_days(30, self.tz)
             trimmed += 30
             size = len(await self.hass.async_add_executor_job(json.dumps, self.data.to_json()))
