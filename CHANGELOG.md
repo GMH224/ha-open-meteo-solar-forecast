@@ -1,5 +1,16 @@
 # Changelog — GMH224 fork
 
+## Unreleased — public-repository clean-up (2026-10-15, no version change)
+
+- Private installation data removed from the public files: test locations
+  near the owner's home replaced by a neutral public location (Zurich city
+  centre), the reference station and town names and its distance replaced by
+  generic wording, the inverter brand removed from examples and audits.
+  No code behaviour changed.
+- New guard `tests/test_public_release.py`: no e-mail addresses; with the
+  private `confidential.md` available, none of its listed strings may appear
+  in any file. `confidential.md` is git-ignored and `export-ignore`.
+
 ## 0.1.34.2 — 2026-10-14 — total cloud, cell temperature, two-year memory
 
 Design confirmed by the owner on 14 Oct 2026 (spec §4, §6, §8, §17 rows

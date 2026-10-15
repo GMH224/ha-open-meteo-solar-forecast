@@ -23,7 +23,7 @@ from custom_components.open_meteo_solar_forecast.local_source import (
 
 UTC = timezone.utc
 TZ = ZoneInfo("Europe/Zurich")
-LAT, LON = 47.48, 8.90
+LAT, LON = 47.3769, 8.5417  # neutral public test location
 NOON = datetime(2026, 10, 7, 11, 0, tzinfo=UTC)  # 13:00 local, sun ~ 33°
 K_NOON = L.hour_key(NOON)
 

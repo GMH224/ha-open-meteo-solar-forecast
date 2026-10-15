@@ -21,7 +21,7 @@ import learning_replay  # noqa: E402
 
 UTC = timezone.utc
 TZ = ZoneInfo("Europe/Zurich")
-LAT, LON = 47.48, 8.90
+LAT, LON = 47.3769, 8.5417  # neutral public test location
 GROUP = L.GroupInfo("10K", 10.0, ("e1",))
 
 

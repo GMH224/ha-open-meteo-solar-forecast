@@ -29,7 +29,7 @@ floor 0.1, season floor 0.7); store schema 2 with migration (F27). Audit
 6–11 Oct 2026: −21 % … +106 % per day, clear days ±1 %). They are
 systematic for recognisable situations, so they can be learned — provided
 the truth is measured independently of the PV model: SwissWeather Fusion
-0.3.4 exposes the MeteoSwiss Tänikon pyranometer (global and diffuse).
+0.3.4 exposes the nearest MeteoSwiss station's pyranometer (global and diffuse).
 
 **Where it sits.** A second config-entry type owns the `LearningHub`. The
 hub never touches the library; it changes the *input* of the local
@@ -81,7 +81,7 @@ export in the executor; recorder access only via the recorder's executor.
 | F27 | Learning store of schema 1 (before 0.1.34.2) | migrated at start: measurements, production, models, day decisions, settings and events kept; forecast archive, 06:00 records and stage 2 dropped; gate restarts; event `migrated` |
 
 **New limitations.** L-L1 hours beyond 54 h lead are never corrected (in
-hybrid mode Fusion days 3–5 stay raw); L-L2 a single station 8 km away is
+hybrid mode Fusion days 3–5 stay raw); L-L2 a single station several kilometres away is
 the truth — local fog boundaries are caught only by the day-ratio and
 correlation checks; L-L3 stage 2 cannot separate arrays sharing an inverter
 (one factor per group); L-L4 spring/summer situations need new evidence

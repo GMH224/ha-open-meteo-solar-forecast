@@ -20,7 +20,7 @@ from custom_components.open_meteo_solar_forecast.shading import (
     solar_position,
 )
 
-LAT, LON = 47.5548, 8.9036
+LAT, LON = 47.3769, 8.5417  # neutral public test location
 
 
 def grid_text(azs, els, fn, month=None) -> str:
@@ -163,7 +163,7 @@ TILT, PANEL_AZ = 45.0, 197.0
 def clear_payload(day="2026-03-21", n_days=1):
     """Open-Meteo minutely_15 shape from pvlib clear-sky, plane via Hay-Davies."""
     times = pd.date_range(day, periods=96 * n_days, freq="15min", tz="UTC") + pd.Timedelta("15min")
-    loc = pvlib.location.Location(LAT, LON, altitude=473)
+    loc = pvlib.location.Location(LAT, LON, altitude=408)
     mid = times - pd.Timedelta("7.5min")
     sp = loc.get_solarposition(mid)
     cs = loc.get_clearsky(mid, solar_position=sp)

@@ -315,7 +315,7 @@ report §5.
 ## 9. Backlog after v0.1.33.2
 
 1. Bias correction of radiation/production against inverter data
-   (Huawei SUN2000 East 5 kW; West + South sharing 10 kW — model as one
+   (East 5 kW inverter; West + South sharing a 10 kW inverter — model as one
    target). Owner question: here or a separate component (architecture §11).
 2. P-05 upstream report (instant power 15 min early) — confirm against a
    live Open-Meteo response first.

@@ -182,7 +182,7 @@ as `datetime` but stores `date`; optional coordinator members.
   paste.
 - **The learner's benefit is unproven** until weeks of the owner's data
   exist; the synthetic test proves it recovers a known bias, not that the
-  real bias is learnable at Tänikon distance.
+  real bias is learnable at the station's distance.
 - Recorder interaction tested with the in-memory recorder of the test
   plugin, not MariaDB/PostgreSQL.
 - mypy backlog of 38 findings in older modules.

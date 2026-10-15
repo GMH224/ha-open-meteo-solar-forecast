@@ -7,7 +7,7 @@ draft, §17 says so; §17 wins over the earlier sections.
 **Owner decisions so far:**
 - start neutral; learning may take up to 10 weeks;
 - one shared store ("B") with full learning and telemetry transparency;
-- the MeteoSwiss station Tänikon (via SwissWeather Fusion ≥ 0.3.4) serves as the weather reference;
+- the nearest MeteoSwiss station (via SwissWeather Fusion ≥ 0.3.4) serves as the weather reference;
 - learn production per inverter;
 - export to `/config/open_meteo_solar_forecast/export/` (folder already created);
 - include an example dashboard;
@@ -28,10 +28,10 @@ physics cannot know:
 1. **Stage 1 — weather:** how much light actually arrives in situations the
    weather forecast describes in a certain way (e.g. "40 % low cloud, small
    temperature–dew point spread, ICON says kt 0.55"). Learned against the
-   Tänikon pyranometer, shared by all three arrays.
+   reference station's pyranometer, shared by all three arrays.
 2. **Stage 2 — per inverter:** a small residual calibration of the PV model
    (e.g. low-light losses on overcast hours), learned from production against
-   the model driven by **measured** Tänikon light.
+   the model driven by **measured** station light.
 
 **Non-goals (this release).**
 - No black-box model of PV power from raw inputs.
@@ -141,7 +141,7 @@ orientation matter less, which the physics then handles correctly.
 ## 6. Stage 2 — per-inverter calibration
 
 **Driver.**
-1. Each night, the model is re-run for yesterday with **measured** Tänikon
+1. Each night, the model is re-run for yesterday with **measured** station
    GHI/DHI instead of the forecast. These are the same entries, settings and
    library, in local mode with a synthetic `HourRecord` list.
 2. The result is summed per inverter group: 10K = West + South, 5K = East.
@@ -265,7 +265,7 @@ learning). Entries without the hub behave exactly as 0.1.33.5 (parity).
 corrected forecasts for the last 28 days, with at least 14 complete days.
 Each hour's correction uses only data older than its issue time, so there is
 no peeking. The gate passes when:
-1. hourly GHI RMSE vs Tänikon (lead bucket of the 05:00-local forecast, i.e.
+1. hourly GHI RMSE vs the station (lead bucket of the 05:00-local forecast, i.e.
    the sunrise view) improves by ≥ 5 %, **and**
 2. daily energy MAE per inverter group is not worse (± 1 %).
 
@@ -296,7 +296,7 @@ again.
 | Next hours | attributes: per hour for the next 36 h — predictors, kt_f → kt′, kd_f → kd′, n analogs, n_eff, shrink s, pooled flag, top 5 analog dates with their error. **This is the "why" of every correction** |
 | Stage 2 factors per group | three bins; attribute "suggested efficiency change" |
 | Station representativeness | 14-day correlation, last excluded day and reason |
-| Snow flag (Tänikon) | on/off with ratio |
+| Snow flag (station) | on/off with ratio |
 | Last learning run | timestamp; duration; outcome |
 
 **Array entries.** The existing attribute `forecast_source` gets a block
@@ -348,7 +348,7 @@ only, no custom cards:
 
 ## 12. Phase 2 (not in 0.1.34): same-day correction
 
-Once the day has started, Tänikon shows how wrong this morning's forecast
+Once the day has started, the station shows how wrong this morning's forecast
 is. The ratio measured ÷ forecast of the last hour is applied to the next
 hour and fades to 1 over about 3 hours. Fog can still lift, and beyond about
 2 hours the weather model is better than persistence again. The remaining-day

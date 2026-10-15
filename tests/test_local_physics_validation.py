@@ -22,7 +22,7 @@ from custom_components.open_meteo_solar_forecast.local_provider import (  # noqa
     LocalOpenMeteoSolarForecast,
 )
 
-LAT, LON = 47.5536, 8.8986  # Frauenfeld
+LAT, LON = 47.3769, 8.5417  # neutral public test location (Zurich city centre)
 UTC = timezone.utc
 
 
@@ -98,7 +98,7 @@ class _ExecutorHass:
 
 
 def _clear_sky_minutes(days: int, cloud_day: int | None):
-    loc = pvlib.location.Location(LAT, LON, altitude=420)
+    loc = pvlib.location.Location(LAT, LON, altitude=408)
     start = pd.Timestamp("2026-10-06 00:00", tz="UTC")
     idx = pd.date_range(start, start + pd.Timedelta(days=days), freq="1min", inclusive="left")
     clear = loc.get_clearsky(idx, model="ineichen")

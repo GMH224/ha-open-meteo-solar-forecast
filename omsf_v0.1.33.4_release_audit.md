@@ -217,5 +217,5 @@ re-pointed pattern: **72/73 caught, 1 equivalent mutant (justified)**.
 2. LV-1: Fusion still delivers ~48 h (ICON-CH2 radiation missing,
    `current_hour_sources` = 2 at 13:51 UTC on 6 Oct).
 3. LV-3: West + South as one entry with a shared 10 kW inverter.
-4. Re-tune damping/efficiency against Huawei data.
+4. Re-tune damping/efficiency against inverter production data.
 5. OMSF-014 array cap; bias correction; snow albedo; SRF disagreement flag.

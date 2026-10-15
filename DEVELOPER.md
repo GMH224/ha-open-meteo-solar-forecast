@@ -78,6 +78,13 @@ suite before changing the pin.**
     (station hours, production, models, day decisions; 0.1.34.2: schema 1
     → 2, M211, M212, M217). Never discard measured data to simplify a
     migration: the owner relies on two years of memory for the seasons.
+13. The repository is public. No private installation data in any file:
+    no home or station location, no hardware brand/serials, no entry ids,
+    no e-mail addresses. Tests use the neutral location in
+    `tests/fusion_fixtures.py` (Zurich city centre). Private data live in
+    `confidential.md` **outside** the repository (`../confidential.md`;
+    git-ignored and `export-ignore` if copied in); `tests/test_public_release.py`
+    fails if any string of its *Never publish* list appears in a file.
 
 ## Running the tests
 
@@ -122,7 +129,8 @@ Test files:
 From 0.1.33.3 `hacs.json` has no `zip_release`: HACS installs the
 `custom_components/open_meteo_solar_forecast/` folder straight from the tag.
 A release is: bump `manifest.json` version, commit, create a GitHub release
-with a new tag. No asset upload. (0.1.33.2 still needed the manually attached
+with a new tag. No asset upload. Before releasing, run the suite with
+`confidential.md` available so `test_public_release.py` actually scans. (0.1.33.2 still needed the manually attached
 zip; the inherited `release.yml` that built it is removed. Guarded by
 `test_hacs_installs_from_the_tag_without_a_release_zip`.)
 

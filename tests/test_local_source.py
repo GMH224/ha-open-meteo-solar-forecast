@@ -64,12 +64,13 @@ def test_the_engine_never_reads_the_clock():
 # ---------------------------------------------------------------------------
 # Solar geometry
 # ---------------------------------------------------------------------------
-def test_solar_noon_in_frauenfeld_is_south_and_at_the_expected_height():
-    # 2026-10-06, declination about -5.2°: noon elevation = 90 - 47.55 - 5.2.
-    noon = datetime(2026, 10, 6, 11, 14, tzinfo=UTC)
+def test_solar_noon_is_south_and_at_the_expected_height():
+    # 2026-10-06, declination about -5.2°: noon elevation = 90 - 47.38 - 5.2;
+    # solar noon at 8.54° E about 11:15 UTC.
+    noon = datetime(2026, 10, 6, 11, 15, tzinfo=UTC)
     sun = ls.sun_position(noon, LAT, LON)
     assert abs(math.degrees(sun.azimuth_rad) - 180) < 1.0
-    assert abs(sun.elevation_deg - 37.2) < 0.4
+    assert abs(sun.elevation_deg - 37.4) < 0.4
 
 
 def test_morning_sun_is_in_the_east_and_evening_sun_in_the_west():

@@ -5,8 +5,8 @@ local weather input) + Home Assistant platform hardening.
 **Design record:** `OMSF_v0_1_34_Learning_Spec.md` (draft 12 Oct 2026,
 confirmed by the owner the same day; §16 answers, §17 deviations).
 **Owner decisions:** neutral start, up to 10 weeks of learning acceptable;
-one shared store with full learning and telemetry transparency; Tänikon as
-the weather reference; learn per inverter; export to
+one shared store with full learning and telemetry transparency; the nearest
+MeteoSwiss station as the weather reference; learn per inverter; export to
 `/config/open_meteo_solar_forecast/export/`; example dashboard; same-day
 correction deferred (phase 2); production counters `…dc_input_energy`
 (10K: West + South) and `…_2` (5K: East); feed-in unlimited; separate hub
@@ -29,7 +29,7 @@ for all three arrays alike — the error is in the weather input (low stratus
 / fog is where every weather model is weakest), not in the PV physics. Such
 errors are systematic for recognisable situations, so they can be learned,
 if the truth is measured independently of the PV model. SwissWeather Fusion
-0.3.4 now provides that truth: the MeteoSwiss Tänikon pyranometer (8 km;
+0.3.4 now provides that truth: the nearest MeteoSwiss station's pyranometer (a few km;
 global and diffuse radiation, 10-minute values), plus cloud cover by layer
 in the hourly forecast.
 

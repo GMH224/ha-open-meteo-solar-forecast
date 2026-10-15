@@ -21,8 +21,8 @@ from datetime import datetime, timedelta, timezone
 
 from custom_components.open_meteo_solar_forecast.local_source import sun_position
 
-LAT = 47.5536  # Frauenfeld
-LON = 8.8986
+LAT = 47.3769  # neutral public test location (Zurich city centre)
+LON = 8.5417
 UTC = timezone.utc
 
 

@@ -256,7 +256,7 @@ after pattern updates and the strengthened test: **50/50**.
 2. LV-3: model West + South as one entry with a shared 10 kW inverter.
 3. LV-4: `best_match` for hybrid entries that should reach days 6–7.
 4. Re-evaluate tuning factors (West efficiency 0.8 and morning damping 1.0,
-   East evening damping 0.9) against Huawei production data under local
+   East evening damping 0.9) against inverter production data under local
    physics.
 5. Carried: bias correction against inverter data; P-04 … P-08; snow albedo;
    SRF disagreement flag; capture a live Fusion attribute as a fixture (the

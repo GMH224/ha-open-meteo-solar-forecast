@@ -73,7 +73,7 @@ def clear_sky_response(params: dict) -> dict:
     compass = (float(params["azimuth"]) + 180.0) % 360.0
     start = pd.Timestamp(dt_util.utcnow()).floor("D") - pd.Timedelta(days=1)
     times = pd.date_range(start, periods=96 * 4, freq="15min", tz="UTC") + pd.Timedelta("15min")
-    loc = pvlib.location.Location(LAT, LON, altitude=473)
+    loc = pvlib.location.Location(LAT, LON, altitude=408)
 
     def plane(moments):
         sp = loc.get_solarposition(moments)
