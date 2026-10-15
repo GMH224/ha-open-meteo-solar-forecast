@@ -13,7 +13,7 @@ Stage 1 (weather, shared by all arrays)
     kt, sun elevation, low cloud, max(mid, high) cloud, temperature - dew
     point, lead-time bucket) are compared with an archive of past forecast
     hours. The forecast errors of the most similar past hours, measured
-    against the MeteoSwiss station (Tänikon), give a shift of kt and of the
+    against the MeteoSwiss reference station, give a shift of kt and of the
     diffuse fraction kd ("analog ensemble", Delle Monache et al. 2013,
     Alessandrini et al. 2015). The shift is shrunk towards zero when the
     evidence is thin, so the learner starts neutral by construction.

@@ -1,8 +1,8 @@
 # Example dashboard for the learning hub (0.1.34). Core cards only.
 # Use: Settings > Dashboards > Add dashboard > (new) > Edit > Raw configuration
 # editor, paste this file. Entity ids assume the groups are named "10K" and
-# "5K"; the production and station entities are the owner's (Huawei inverters,
-# SwissWeather Fusion 0.3.4) - replace them with yours.
+# "5K"; the production and station entities are examples (inverter energy
+# counters, SwissWeather Fusion 0.3.4) - replace them with yours.
 title: Solar forecast learning
 views:
   - title: Learning
@@ -79,7 +79,7 @@ views:
         hours_to_show: 24
         entities:
           - entity: sensor.swissweather_fusion_reference_station_global_radiation
-            name: Taenikon global radiation
+            name: Reference station global radiation
           - entity: sensor.inverter_input_power
             name: 10K DC power
           - entity: sensor.inverter_input_power_2

@@ -1,4 +1,4 @@
-# Geometry of the South array (GMH224 installation), version 2: roof pitch 40 deg.
+# Example: geometry of a south-facing array on an L-shaped house, version 2: roof pitch 40 deg.
 # Frame: metres, x = east, y = north, z = up. Origin = inner eave corner of
 # the L-shaped house, where both eaves meet (z = 0 at eave height).
 # Version 1 (0.1.33.5) was fitted on 2026-10-11 for 45 deg roofs. Refitted
