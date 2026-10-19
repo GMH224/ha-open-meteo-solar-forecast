@@ -665,24 +665,36 @@ def test_state_matrix(gate, switch, rep, ever, state):
     assert L.derive_state(gate, switch, rep, ever)[0] == state
 
 
-def test_issue6_captured_once_after_six_local():
+SUNRISE = L.sunrise_utc("2026-10-07", TZ, LAT, LON)
+DECISION = SUNRISE + timedelta(hours=1)
+
+
+def test_sunrise_by_hand():
+    # Zurich, 7 Oct 2026: sunrise 07:33 local (05:33 UTC) within the 2-min step
+    assert datetime(2026, 10, 7, 5, 30, tzinfo=UTC) <= SUNRISE <= datetime(2026, 10, 7, 5, 36, tzinfo=UTC)
+    before = SUNRISE - timedelta(minutes=2)
+    sun = L.sun_position(before, LAT, LON)
+    assert math.degrees(math.asin(sun.cos_zenith)) < L.SUNRISE_ELEVATION_DEG
+    assert L.sunrise_utc("2026-06-21", TZ, LAT, LON) < datetime(2026, 6, 21, 3, 40, tzinfo=UTC)
+
+
+def test_decision_forecast_captured_once_from_sunrise_plus_one_hour():
     data = L.LearningData()
     p = pred()
-    before = datetime(2026, 10, 7, 3, 25, tzinfo=UTC)  # 05:25 local
-    assert not L.capture_issue6(data, {K_NOON: p}, {}, before, TZ)
-    at = datetime(2026, 10, 7, 4, 25, tzinfo=UTC)  # 06:25 local
+    assert not L.capture_issue6(data, {K_NOON: p}, {}, DECISION - timedelta(minutes=1), TZ, LAT, LON)
     c = L.Correction(shift_kt=-0.1)
-    assert L.capture_issue6(data, {K_NOON: p}, {K_NOON: c}, at, TZ)
+    assert L.capture_issue6(data, {K_NOON: p}, {K_NOON: c}, DECISION, TZ, LAT, LON)
     assert data.d["issue6"]["2026-10-07"]["hours"][K_NOON][:2] == [0.6, 0.5]
-    assert not L.capture_issue6(data, {K_NOON: p}, {}, at + timedelta(hours=1), TZ)
+    assert not L.capture_issue6(data, {K_NOON: p}, {}, DECISION + timedelta(hours=1), TZ, LAT, LON)
 
 
-def test_entry_day_only_same_day_after_six():
+def test_entry_day_only_same_day_from_sunrise_plus_one_hour():
     data = L.LearningData()
-    assert not L.record_entry_day(data, "e1", "2026-10-07", 1, 2, datetime(2026, 10, 7, 3, tzinfo=UTC), TZ)
-    assert not L.record_entry_day(data, "e1", "2026-10-08", 1, 2, datetime(2026, 10, 7, 5, tzinfo=UTC), TZ)
-    assert L.record_entry_day(data, "e1", "2026-10-07", 1, 2, datetime(2026, 10, 7, 5, tzinfo=UTC), TZ)
-    assert not L.record_entry_day(data, "e1", "2026-10-07", 9, 9, datetime(2026, 10, 7, 6, tzinfo=UTC), TZ)
+    early = DECISION - timedelta(minutes=1)
+    assert not L.record_entry_day(data, "e1", "2026-10-07", 1, 2, early, TZ, LAT, LON)
+    assert not L.record_entry_day(data, "e1", "2026-10-08", 1, 2, DECISION, TZ, LAT, LON)
+    assert L.record_entry_day(data, "e1", "2026-10-07", 1, 2, DECISION, TZ, LAT, LON)
+    assert not L.record_entry_day(data, "e1", "2026-10-07", 9, 9, DECISION + timedelta(hours=1), TZ, LAT, LON)
     assert data.d["entry_days"]["2026-10-07"]["e1"]["raw"] == 1.0
 
 
@@ -1001,7 +1013,7 @@ def test_store_of_schema_1_is_migrated_keeping_measurements():
             row.pop()  # schema-1 rows had no total cloud
     raw["stage2"]["groups"] = {"10K": {"overcast": {"factor": 1.0}, "broken": {"factor": 1.0}, "clear": {"factor": 1.0}}}
     migrated = L.LearningData.from_json(raw)
-    assert migrated.migrated_from == 1 and migrated.d["schema"] == 2
+    assert migrated.migrated_from == 1 and migrated.d["schema"] == L.STORE_SCHEMA_VERSION
     assert migrated.d["archive"] == {} and migrated.d["issue6"] == {} and migrated.d["gate"] is None
     assert migrated.d["station_hours"] and migrated.d["production"]["10K"] and migrated.d["days"]
     assert migrated.d["events"]  # kept

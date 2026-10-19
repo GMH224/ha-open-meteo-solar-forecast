@@ -52,6 +52,7 @@ UTC = timezone.utc
 # 06:30 local (CEST): after the sunrise capture time, before sunrise.
 NOW = datetime(2026, 10, 7, 4, 30, tzinfo=UTC)
 HOUR0 = NOW.replace(minute=0)
+LATER = NOW + timedelta(hours=3)  # 09:30 local: after sunrise + 1 h (decision forecast)
 WEATHER = "weather.swissweather_fusion"
 IRRADIANCE = "sensor.swissweather_fusion_solar_irradiance_ghi_hour_average"
 SNOW = "sensor.swissweather_fusion_snow_depth"
@@ -264,7 +265,12 @@ async def test_member_forecast_is_unchanged_while_not_applied(hass, zurich, free
     assert report["applied"] is False and report["state"] == L.STATE_ELIGIBLE
     assert report["today_corrected_wh"] < report["today_raw_wh"]  # shadow value is visible
     assert hass.states.get("sensor.south_forecast_source").attributes["learning"]["applied"] is False
-    # the 06:30 refresh is recorded once for the energy half of the gate
+    assert "2026-10-07" not in hub.data.d["entry_days"]  # 06:30: before sunrise + 1 h
+    # the first refresh from sunrise + 1 h on is recorded for the energy half of the gate
+    freezer.move_to(LATER)
+    fake.publish(LATER.replace(minute=0))
+    coordinator = await refresh(hass, array)
+    report = coordinator.learning_report
     recorded = hub.data.d["entry_days"]["2026-10-07"][array.entry_id]
     assert recorded["raw"] == report["today_raw_wh"] and recorded["corr"] == report["today_corrected_wh"]
 
@@ -325,7 +331,10 @@ async def test_correction_shows_per_group(hass, zurich, freezer):
 async def test_hourly_run_archives_predictors_and_explains_corrections(hass, zurich, freezer):
     _, array, _, hub = await basic(hass, freezer)
     await hub.async_run_hourly(NOW)
-    assert hub.last_hourly["forecast"].endswith("06:00 forecast captured")
+    assert not hub.last_hourly["forecast"].endswith("decision forecast captured")  # 06:30: before sunrise + 1 h
+    freezer.move_to(LATER)
+    await hub.async_run_hourly(LATER)
+    assert hub.last_hourly["forecast"].endswith("decision forecast captured")
     keys = sorted(hub.data.d["archive"])
     assert keys and all(set(hub.data.d["archive"][k]) <= {0, 1, 2, 3} for k in keys)
     first = hub.data.d["archive"][keys[0]]
@@ -508,8 +517,11 @@ async def test_reset_requires_confirmation_and_restarts_the_gate(hass, zurich, f
     await hass.services.async_call(DOMAIN, "reset_learning", {"confirm": True, "scope": "stage1"}, blocking=True)
     assert hub.data.d["archive"] and hub.data.d["gate"] is None and hub.data.d["issue6"] == {}
     assert hub.data.d["resets"][-1][1] == "stage1"
+    hub.data.set_same_day(True, NOW)
+    hub.data.d["same_day"]["days"]["2026-10-06"] = {"bands": {}, "decisions": {}}
     await hass.services.async_call(DOMAIN, "reset_learning", {"confirm": True, "scope": "all"}, blocking=True)
     assert hub.data.d["archive"] == {} and not hub.data.apply_switch
+    assert not hub.data.same_day_switch and hub.data.d["same_day"]["days"] == {}
     assert any(e[1] == "reset" for e in hub.data.d["events"])
 
 
@@ -529,13 +541,15 @@ async def test_export_writes_the_fixed_folder(hass, zurich, freezer):
     base = Path(hass.config.path("open_meteo_solar_forecast", "export"))
     names = {p.name for p in base.iterdir()}
     assert {"archive_2026.csv", "station_hours_2026.csv", "days.csv", "events.csv", "settings.json",
-            "forecast_0600.csv", "production_2026.csv", "snapshots"} <= names
+            "forecast_decision.csv", "production_2026.csv", "snapshots", "same_day_decisions.csv",
+            "same_day_bands.csv"} <= names
     # retention removes only old yearly files, never the others
     (base / "archive_2020.csv").write_text("x")
     (base / "notes_2020.csv").write_text("x")
+    (base / "forecast_0600.csv").write_text("x")  # name used up to 0.1.34.2
     await hass.services.async_call(DOMAIN, "export_learning", {}, blocking=True)
     assert not (base / "archive_2020.csv").exists() and (base / "notes_2020.csv").exists()
-    assert (base / "forecast_0600.csv").exists()
+    assert (base / "forecast_decision.csv").exists() and not (base / "forecast_0600.csv").exists()
     settings = json.loads((base / "settings.json").read_text())
     assert settings["groups"][0]["name"] == "10K" and settings["algorithm"] == L.ALGORITHM_VERSION
     assert not list(base.glob("*.tmp"))
@@ -738,9 +752,9 @@ async def test_incomplete_days_are_not_recorded_for_the_gate(hass, zurich, freez
     from datetime import date as _date
 
     today = NOW.astimezone(hub.tz).date()
-    hub.report_entry("x", {today: 5000.0}, {today: 4000.0}, {today + timedelta(days=1)}, NOW)
+    hub.report_entry("x", {today: 5000.0}, {today: 4000.0}, {today + timedelta(days=1)}, LATER)
     assert hub.data.d["entry_days"] == {} and hub.entry_reports["x"]["today_raw_wh"] is None
-    hub.report_entry("x", {today: 5000.0}, {today: 4000.0}, {today}, NOW)
+    hub.report_entry("x", {today: 5000.0}, {today: 4000.0}, {today}, LATER)
     assert hub.data.d["entry_days"]["2026-10-07"]["x"]["raw"] == 5000.0
     assert isinstance(today, _date)
 

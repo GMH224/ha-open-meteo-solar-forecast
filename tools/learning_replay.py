@@ -51,7 +51,7 @@ def load(folder: Path) -> dict:
     with (folder / "days.csv").open(encoding="utf-8") as handle:
         for item in csv.DictReader(handle):
             days[item["date"]] = item
-    issue_path = folder / "forecast_0600.csv"
+    issue_path = folder / "forecast_decision.csv"
     if issue_path.exists():
         with issue_path.open(encoding="utf-8") as handle:
             for item in csv.DictReader(handle):
@@ -220,7 +220,7 @@ class Replay:
 
 
 def gate_irradiance(data: dict) -> dict | None:
-    """RMSE of the 06:00 forecasts (raw / corrected) over the gate window."""
+    """RMSE of the decision forecasts (raw / corrected) over the gate window."""
     s = data["settings"]
     gate = s.get("gate")
     if not gate:
@@ -251,6 +251,90 @@ def gate_irradiance(data: dict) -> dict | None:
             "stored": {k: gate.get(k) for k in ("days", "rmse_raw_w_m2", "rmse_corrected_w_m2")}}
 
 
+# ---------------------------------------------------------------------------
+# Same-day correction (0.1.35): the learned persistence table
+# ---------------------------------------------------------------------------
+
+
+def load_same_day(folder: Path) -> tuple[dict, dict] | None:
+    """(day -> {"bands": {ts: (k, clear)}, "decisions": {ts: (e, situation, {hour: k})}}, groups)."""
+    decisions_path, bands_path = folder / "same_day_decisions.csv", folder / "same_day_bands.csv"
+    if not decisions_path.exists() or not bands_path.exists():
+        return None
+    days: dict = {}
+    with bands_path.open(encoding="utf-8") as handle:
+        for item in csv.DictReader(handle):
+            record = days.setdefault(item["date"], {"bands": {}, "decisions": {}})
+            groups = [key for key in item if key.endswith("_measured_kwh")]
+            measured = [_f(item[g]) for g in groups]
+            record["bands"][_ts(item["band_utc"])] = (_f(item["k_measured"]), float(item["clear_kwh"]), measured)
+    with decisions_path.open(encoding="utf-8") as handle:
+        for item in csv.DictReader(handle):
+            record = days.setdefault(item["date"], {"bands": {}, "decisions": {}})
+            kfc = {}
+            for part in filter(None, (item.get("forecast_k_by_hour") or "").split(";")):
+                moment, value = part.rsplit("=", 1)
+                kfc[_ts(moment)] = float(value)
+            record["decisions"][_ts(item["decision_utc"])] = (_f(item["e_hat"]), item["situation"], kfc)
+    return days, {}
+
+
+def same_day_table(folder: Path, settings: dict) -> dict | None:
+    """Recompute β and σ (least squares through the origin per lead bucket
+    and situation, shrunk toward the prior, clamped; residual spread) from
+    the exported days and compare with the stored table."""
+    section = settings.get("same_day") or {}
+    stored, p = section.get("table"), section.get("parameters")
+    loaded = load_same_day(folder)
+    if not stored or not p or loaded is None:
+        return None
+    days = loaded[0]
+    tz = ZoneInfo(settings["timezone"])
+    before = datetime.fromisoformat(stored["computed"]).astimezone(tz).date().isoformat()
+    buckets = [tuple(b) for b in p["lead_buckets_h"]]
+
+    def usable(record: dict) -> bool:
+        lit = [b for b in record["bands"].values() if b[1] >= p["band_min_clear_kwh"]]
+        measured = [b for b in lit if b[0] is not None]
+        return bool(lit) and bool(record["decisions"]) and len(measured) >= p["usable_band_share"] * len(lit)
+
+    chosen = sorted(d for d, r in days.items() if d < before and usable(r))[-p["beta_window_days"]:]
+    cells: dict = {}
+    for day in chosen:
+        record = days[day]
+        for d_ts, (x, sit, kfc) in record["decisions"].items():
+            if x is None:
+                continue
+            for b_ts, (k, clear, _m) in record["bands"].items():
+                if b_ts < d_ts or k is None or clear < p["band_min_clear_kwh"]:
+                    continue
+                forecast = kfc.get(b_ts // 3600 * 3600)
+                if forecast is None:
+                    continue
+                lead = (b_ts + p["band_s"] / 2 - d_ts) / 3600
+                index = next((i for i, (lo, hi) in enumerate(buckets) if lo <= lead < hi), None)
+                if index is None:
+                    continue
+                cells.setdefault((sit, index), []).append((clear, x, k - forecast, day))
+    differences = []
+    for sit in ("improving", "other"):
+        for index in range(len(buckets)):
+            pairs = cells.get((sit, index), [])
+            n = len({q[3] for q in pairs})
+            sxx = sum(w * x * x for w, x, _y, _d in pairs)
+            prior = p["prior_beta"][index]
+            beta = prior if n == 0 or sxx <= 0 else (
+                n * sum(w * x * y for w, x, y, _d in pairs) / sxx + p["prior_days"] * prior) / (n + p["prior_days"])
+            beta = min(max(beta, p["beta_min"]), p["beta_max"])
+            differences.append(abs(beta - stored["beta"][sit][index]))
+            wsum = sum(w for w, *_ in pairs)
+            if n and wsum > 0:
+                sigma = math.sqrt(sum(w * (y - beta * x) ** 2 for w, x, y, _d in pairs) / wsum)
+                differences.append(abs(sigma - (stored["sigma"][sit][index] or 0.0)))
+    return {"usable_days": len(chosen), "stored_usable_days": stored.get("usable_days"),
+            "max_difference": max(differences) if differences else 0.0}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("folder", type=Path)
@@ -262,7 +346,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cannot read the export: {err}", file=sys.stderr)
         return 2
     result = Replay(data).run(args.verbose)
-    print(json.dumps({"corrections": result, "gate": gate_irradiance(data)}, indent=1, default=str))
+    same_day = same_day_table(args.folder, data["settings"])
+    print(json.dumps({"corrections": result, "gate": gate_irradiance(data), "same_day": same_day},
+                     indent=1, default=str))
     gate = gate_irradiance(data)
     gate_ok = True
     if gate is not None and gate["stored"]["rmse_raw_w_m2"] is not None:
@@ -271,7 +357,10 @@ def main(argv: list[str] | None = None) -> int:
             and abs(gate["rmse_raw_w_m2"] - gate["stored"]["rmse_raw_w_m2"]) <= 0.01
             and abs(gate["rmse_corrected_w_m2"] - gate["stored"]["rmse_corrected_w_m2"]) <= 0.01
         )
-    return 0 if result["mismatches"] == 0 and gate_ok else 1
+    same_day_ok = same_day is None or (
+        same_day["usable_days"] == same_day["stored_usable_days"] and same_day["max_difference"] <= 1e-5
+    )
+    return 0 if result["mismatches"] == 0 and gate_ok and same_day_ok else 1
 
 
 if __name__ == "__main__":

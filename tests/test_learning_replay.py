@@ -39,7 +39,8 @@ def simulate(days: int, seed: int = 2, freeze_day: int | None = None, reset_day:
             data.d["resets"].append([int((day0 - timedelta(hours=5)).timestamp()), "stage1"])
         # three issues a day (different lead buckets), like the hourly run
         truth = {}
-        for issue in (day0 - timedelta(hours=26), day0 - timedelta(hours=8), day0 + timedelta(hours=4, minutes=25)):
+        # the third issue is the decision forecast (after sunrise + 1 h, 09:25 local)
+        for issue in (day0 - timedelta(hours=26), day0 - timedelta(hours=8), day0 + timedelta(hours=7, minutes=25)):
             preds = {}
             for h in range(24):
                 k = L.hour_key(day0 + timedelta(hours=h))
@@ -55,7 +56,7 @@ def simulate(days: int, seed: int = 2, freeze_day: int | None = None, reset_day:
                 truth.setdefault(k, (preds[k].kt, low))
             corr = L.compute_corrections(data, preds, issue, TZ)
             data.archive_forecast(preds, corr, issue)
-            L.capture_issue6(data, preds, corr, issue, TZ)
+            L.capture_issue6(data, preds, corr, issue, TZ, LAT, LON)
         for k, (kt, low) in truth.items():
             e0h, _ = L.hour_geometry(k, LAT, LON)
             kt_m = max(kt + (-0.2 if low > 50 else 0.03) + rng.gauss(0, 0.03), 0.02)
@@ -74,7 +75,7 @@ def export(data: L.LearningData, folder: Path) -> Path:
         (folder / f"archive_{year}.csv").write_text(L.export_archive_csv(data, year))
         (folder / f"station_hours_{year}.csv").write_text(L.export_station_csv(data, year))
     (folder / "days.csv").write_text(L.export_days_csv(data, [GROUP], TZ))
-    (folder / "forecast_0600.csv").write_text(L.export_issue6_csv(data))
+    (folder / "forecast_decision.csv").write_text(L.export_issue6_csv(data))
     (folder / "settings.json").write_text(json.dumps(L.export_settings(data, [GROUP], TZ, LAT, LON), default=str))
     return folder
 
@@ -126,3 +127,60 @@ def test_replay_marks_rows_whose_evidence_was_purged(tmp_path):
 
 def test_replay_rejects_a_missing_export(tmp_path):
     assert learning_replay.main([str(tmp_path / "nothing")]) == 2
+
+
+# ---------------------------------------------------------------------------
+# 0.1.35: the same-day persistence table is reproduced from the export
+# ---------------------------------------------------------------------------
+
+
+def same_day_export(tmp_path, tamper: bool = False) -> Path:
+    from custom_components.open_meteo_solar_forecast import same_day as SD
+
+    rng = random.Random(3)
+    data = simulate(5)
+    section = data.d["same_day"]
+    for i in range(25):
+        day0 = datetime(2026, 9, 1, 7, 0, tzinfo=UTC) + timedelta(days=i)
+        bands, decisions = {}, {}
+        e = rng.gauss(0, 0.25)
+        for j in range(36):
+            b = int(day0.timestamp()) + j * 900
+            e = 0.9 * e + rng.gauss(0, 0.1)
+            bands[str(b)] = {"m": {"10K": round(rng.uniform(0, 1), 4)}, "c": round(rng.uniform(0.02, 1.0), 4),
+                             "k": None if j % 11 == 5 else round(0.6 + e, 4)}
+        for j in (0, 6, 12):
+            d_ts = int(day0.timestamp()) + j * 900
+            decisions[str(d_ts)] = {
+                "e": None if (i + j) % 7 == 0 else round(rng.gauss(0, 0.3), 4),
+                "sit": "improving" if (i + j) % 3 == 0 else "other",
+                "kfc": {str(int(day0.timestamp()) // 3600 * 3600 + h * 3600): round(rng.uniform(0.3, 0.9), 4)
+                        for h in range(10)},
+                "rem": {"10K": [5.0, 4.0, None]},
+            }
+        section["days"][day0.astimezone(TZ).date().isoformat()] = {"bands": bands, "decisions": decisions}
+    computed = datetime(2026, 9, 20, 1, 30, tzinfo=UTC)
+    table = SD.learn_table(section["days"], computed.astimezone(TZ).date().isoformat())
+    assert table.usable_days > 10
+    section["table"] = {"computed": computed.isoformat(), **table.to_json()}
+    folder = export(data, tmp_path / "export")
+    d_rows, d_header, b_rows, b_header = SD.export_rows(section, ["10K"])
+    if tamper:
+        b_rows[40][2] = b_rows[40][2] + 0.05 if b_rows[40][2] is not None else 0.5
+    (folder / "same_day_decisions.csv").write_text(L._csv(d_rows, d_header))
+    (folder / "same_day_bands.csv").write_text(L._csv(b_rows, b_header))
+    return folder
+
+
+def test_replay_reproduces_the_same_day_table(tmp_path):
+    folder = same_day_export(tmp_path)
+    data = learning_replay.load(folder)
+    result = learning_replay.same_day_table(folder, data["settings"])
+    assert result["usable_days"] == result["stored_usable_days"] > 10
+    assert result["max_difference"] <= 1e-5
+    assert learning_replay.main([str(folder)]) == 0
+
+
+def test_replay_detects_a_tampered_same_day_band(tmp_path):
+    folder = same_day_export(tmp_path, tamper=True)
+    assert learning_replay.main([str(folder)]) == 1
