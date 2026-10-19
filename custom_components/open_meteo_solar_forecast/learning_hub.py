@@ -17,7 +17,9 @@ is caught, logged, recorded as an event and leaves the forecast raw.
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
+import math
 import os
 import shutil
 import time
@@ -44,8 +46,10 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
+import numpy as np
 
 from . import learning as L
+from . import same_day as SD
 from .const import (
     CONF_GROUP_ENERGY_ENTITY,
     CONF_GROUP_MEMBERS,
@@ -82,6 +86,13 @@ STATION_STALE = timedelta(minutes=60)
 STATION_BACKFILL_FIRST = timedelta(days=10)
 STATION_BACKFILL_RESTART = timedelta(hours=6)
 YEARLY_EXPORTS = ("archive", "station_hours", "production")
+SAME_DAY_MINUTES = tuple(range(0, 60, 5))  # 0.1.35: same-day run every 5 min, at hh:mm:40
+SAME_DAY_SECOND = 40
+CURVES_MAX_AGE = timedelta(minutes=60)
+MEMBER_REPORT_MAX_AGE = timedelta(minutes=25)
+DECISION_LATE_LIMIT = timedelta(minutes=15)
+COUNTER_KEEP = timedelta(hours=30)
+ENERGY_TO_KWH = {"Wh": 0.001, "kWh": 1.0, "MWh": 1000.0}
 
 
 def get_hub(hass: HomeAssistant) -> LearningHub | None:
@@ -257,6 +268,13 @@ class LearningHub:
         self.last_nightly: dict[str, Any] = {}
         self.last_startup: dict[str, Any] = {}
         self.store_size: int | None = None
+        # 0.1.35 same-day correction (memory only; results go to the store)
+        self.counters: dict[str, list[tuple[float, float]]] = {}
+        self.member_same_day: dict[str, dict[str, Any]] = {}
+        self.curves: SD.Curves | None = None
+        self.curves_key: tuple[str, float] | None = None
+        self.signal: SD.Signal | None = None
+        self.last_same_day: dict[str, Any] = {}
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -276,6 +294,14 @@ class LearningHub:
             )
         self._unsubs.append(
             async_track_time_change(self.hass, self._hourly_cb, minute=HOURLY_MINUTE, second=0)
+        )
+        energy_entities = [c["energy_entity"] for c in self.group_configs if c["energy_entity"]]
+        if energy_entities:
+            self._unsubs.append(
+                async_track_state_change_event(self.hass, energy_entities, self._on_counter_event)
+            )
+        self._unsubs.append(
+            async_track_time_change(self.hass, self._same_day_cb, minute=SAME_DAY_MINUTES, second=SAME_DAY_SECOND)
         )
         self._unsubs.append(
             async_track_time_change(self.hass, self._nightly_cb, hour=NIGHTLY_HOUR, minute=NIGHTLY_MINUTE, second=0)
@@ -316,6 +342,7 @@ class LearningHub:
         report: dict[str, Any] = {"started": now.isoformat()}
         await self._step(report, "station_backfill", self._async_backfill_station(
             now, STATION_BACKFILL_FIRST if first else STATION_BACKFILL_RESTART))
+        await self._step(report, "counter_backfill", self._async_backfill_counters(now))
         self.last_startup = report  # kept apart: the hourly run replaces its own report
         await self.async_run_hourly(now)
         last = parse_utc(self.data.d.get("last_nightly"))
@@ -327,6 +354,12 @@ class LearningHub:
         # Owned by the entry: cancelled when the hub is unloaded.
         self.entry.async_create_background_task(
             self.hass, self.async_run_hourly(), "open_meteo_solar_forecast learning hourly run"
+        )
+
+    @callback
+    def _same_day_cb(self, _now: datetime) -> None:
+        self.entry.async_create_background_task(
+            self.hass, self.async_run_same_day(), "open_meteo_solar_forecast same-day run"
         )
 
     @callback
@@ -464,6 +497,28 @@ class LearningHub:
         """True only in state ``applied`` (gate passed and switch on)."""
         return self.state == L.STATE_APPLIED
 
+    @property
+    def same_day_gate_passed(self) -> bool:
+        gate = self.data.d["same_day"].get("gate") or {}
+        return bool(gate.get("passed"))
+
+    @property
+    def same_day_applies(self) -> bool:
+        """0.1.35: the same-day correction is served only with its own check
+        passed, its switch on and no configuration problem."""
+        return self.data.same_day_switch and self.same_day_gate_passed and not self.config_problem
+
+    @property
+    def same_day_state(self) -> str:
+        if self.config_problem:
+            return "paused"
+        if self.same_day_applies:
+            return "applied"
+        if self.same_day_gate_passed:
+            return "eligible"
+        gate = self.data.d["same_day"].get("gate") or {}
+        return "shadow" if (gate.get("days") or 0) >= SD.GATE_MIN_DAYS else "collecting"
+
     def _recompute_state(self, now: datetime, refresh: bool = True) -> None:
         rep = self.data.d.get("representativeness") or {}
         representative = rep.get("representative", True)
@@ -509,6 +564,17 @@ class LearningHub:
         if changed:
             self._notify()
 
+    async def async_set_same_day(self, value: bool) -> None:
+        async with self._lock:
+            now = dt_util.utcnow()
+            changed = self.data.set_same_day(value, now)
+            if changed:
+                self._save()
+        if changed:
+            if self.same_day_gate_passed:
+                self._refresh_members()
+            self._notify()
+
     async def async_set_frozen(self, value: bool) -> None:
         async with self._lock:
             changed = self.data.set_frozen(value, dt_util.utcnow())
@@ -528,7 +594,9 @@ class LearningHub:
                 self.data.d["created"] = now.isoformat()
                 self.data.d["events"] = events
                 settings["apply"] = False
+                settings["same_day"] = False
                 self.data.d["settings"] = settings
+                self.signal = None
             else:
                 ts = int(now.timestamp())
                 self.data.d["resets"].append([ts, scope])
@@ -656,7 +724,7 @@ class LearningHub:
         self.entry_reports[entry_id] = report
         if report["today_raw_wh"] is not None and report["today_corrected_wh"] is not None:
             if L.record_entry_day(self.data, entry_id, today.isoformat(), report["today_raw_wh"],
-                                  report["today_corrected_wh"], now, self.tz):
+                                  report["today_corrected_wh"], now, self.tz, self.latitude, self.longitude):
                 self._save()
         self._notify()
 
@@ -677,6 +745,309 @@ class LearningHub:
             raw += pair[0] / 1000.0
             corr += pair[1] / 1000.0
         return {"raw_kwh": round(raw, 2), "corrected_kwh": round(corr, 2), "difference_kwh": round(corr - raw, 2)}
+
+    # -- same-day correction (0.1.35) ----------------------------------------------------------
+
+    def _counter_group(self, entity_id: str | None) -> str | None:
+        for config in self.group_configs:
+            if config["energy_entity"] == entity_id:
+                return config["name"]
+        return None
+
+    @callback
+    def _on_counter_event(self, event: Event[EventStateChangedData]) -> None:
+        group = self._counter_group(event.data.get("entity_id"))
+        if group is not None:
+            self._ingest_counter(group, event.data.get("new_state"), dt_util.utcnow())
+
+    def _ingest_counter(self, group: str, state: State | None, now: datetime) -> bool:
+        """Keep a counter reading (kWh) with its change time. Unit and value
+        are validated; readings older than COUNTER_KEEP are dropped."""
+        if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return False
+        value = _to_float(state.state)
+        factor = ENERGY_TO_KWH.get(str(state.attributes.get("unit_of_measurement")))
+        if value is None or factor is None or not math.isfinite(value) or value < 0:
+            return False
+        ts = state.last_changed.timestamp()
+        series = self.counters.setdefault(group, [])
+        reading = (ts, value * factor)
+        if not series or ts > series[-1][0]:
+            series.append(reading)
+        elif not any(abs(t - ts) < 1e-6 for t, _ in series):
+            bisect.insort(series, reading)
+        else:
+            return False
+        limit = (now - COUNTER_KEEP).timestamp()
+        while len(series) > 1 and series[1][0] < limit:
+            series.pop(0)
+        return True
+
+    def _counter_fresh_until(self, group: str) -> float:
+        entity = self.energy_entity(group)
+        state = self.hass.states.get(entity) if entity else None
+        if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return 0.0
+        reported = getattr(state, "last_reported", None) or state.last_updated
+        return float(reported.timestamp())
+
+    async def _async_backfill_counters(self, now: datetime) -> str:
+        from homeassistant.components.recorder import get_instance, history
+
+        start = now - COUNTER_KEEP
+        added = 0
+        for config in self.group_configs:
+            entity = config["energy_entity"]
+            if not entity:
+                continue
+            states = await get_instance(self.hass).async_add_executor_job(
+                lambda entity=entity: history.state_changes_during_period(
+                    self.hass, start, now, entity, include_start_time_state=True
+                )
+            )
+            for state in states.get(entity, []):
+                added += int(self._ingest_counter(config["name"], state, now))
+        return f"{added} readings"
+
+    def report_same_day(
+        self,
+        entry_id: str,
+        base: LocalSnapshot,
+        base_estimate: Any,
+        sdc_estimate: Any,
+        cautious_estimate: Any,
+        now: datetime,
+    ) -> None:
+        """A member's served-without-correction light and today's bands of
+        the three forecasts (without, with, cautious)."""
+        group = self.group_for(entry_id)
+        if group is None:
+            return
+        today = now.astimezone(self.tz).date()
+
+        def bands(estimate: Any) -> dict[int, float] | None:
+            if estimate is None:
+                return None
+            return {
+                int(moment.timestamp()): float(wh) / 1000.0
+                for moment, wh in estimate.wh_period_15m.items()
+                if moment.astimezone(self.tz).date() == today
+            }
+
+        kfc: dict[int, float] = {}
+        for start, record in base.hours.items():
+            if start.astimezone(self.tz).date() != today:
+                continue
+            k = SD.forecast_k(record, self.latitude, self.longitude)
+            if k is not None:
+                kfc[L.hour_key(start)] = k
+        self.member_same_day[entry_id] = {
+            "group": group.name,
+            "updated": now,
+            "day": today.isoformat(),
+            "kfc": kfc,
+            "temps": dict(base.temperatures_c),
+            "offset": base.utc_offset_seconds,
+            "bands": {"base": bands(base_estimate), "sdc": bands(sdc_estimate), "cautious": bands(cautious_estimate)},
+        }
+
+    def _fresh_signal(self, now: datetime) -> SD.Signal | None:
+        computed = self.last_same_day.get("signal_time")
+        if self.signal is None or computed is None or now - computed > timedelta(minutes=15):
+            return None
+        return self.signal
+
+    async def async_same_day_plan(
+        self, hours: Mapping[datetime, HourRecord], now: datetime
+    ) -> tuple[dict[datetime, HourRecord] | None, dict[datetime, HourRecord] | None, dict[str, Any]]:
+        """Corrected and cautious hour records for a member (None: none)."""
+        table = SD.Table.from_json(self.data.d["same_day"].get("table"))
+        signal = self._fresh_signal(now)
+        served_shifts, cautious_shifts = await self.hass.async_add_executor_job(
+            SD.plan, hours, signal, table, now, self.tz, self.latitude, self.longitude
+        )
+        served = cautious = None
+        if served_shifts:
+            served, _ = await self.hass.async_add_executor_job(
+                L.apply_corrections, hours, served_shifts, None, self.latitude, self.longitude
+            )
+        if cautious_shifts is not None:
+            cautious, _ = await self.hass.async_add_executor_job(
+                L.apply_corrections, hours, cautious_shifts, None, self.latitude, self.longitude
+            )
+        info = {
+            "state": self.same_day_state,
+            "valid": bool(signal and signal.valid),
+            "e": None if signal is None or signal.e is None else round(signal.e, 4),
+            "situation": None if signal is None else signal.situation,
+        }
+        return served, cautious, info
+
+    async def async_run_same_day(self, now: datetime | None = None) -> None:
+        now = now or dt_util.utcnow()
+        report: dict[str, Any] = {"started": now.isoformat()}
+        async with self._lock:
+            result = await self._step(report, "same_day", self._async_same_day_step(now))
+            if result is None:
+                self.signal = None  # a failed run never leaves an old signal in use
+            report["signal"] = self.signal.as_dict() if self.signal is not None else None
+            self.last_same_day = {**report, "signal_time": now if self.signal is not None else None}
+        self._notify()
+
+    async def _async_same_day_step(self, now: datetime) -> str:
+        if self.config_problem or not self.groups:
+            self.signal = SD.Signal(False, "configuration problem")
+            return "paused"
+        day = now.astimezone(self.tz).date().isoformat()
+        sunrise = L.sunrise_utc(day, self.tz, self.latitude, self.longitude)
+        if sunrise is None or now < sunrise:
+            self.signal = SD.Signal(False, "before sunrise")
+            return "night"
+        section = self.data.d["same_day"]
+        record = section["days"].setdefault(day, {"bands": {}, "decisions": {}})
+        if not await self._async_ensure_curves(day, now):
+            self.signal = SD.Signal(False, "waiting for the first refresh of every member today")
+            return "waiting for member refresh"
+        stored = self._finalize_bands(record, sunrise, now)
+        names = [g.name for g in self.groups]
+        measured = {int(k): band.get("m") or {} for k, band in record["bands"].items()}
+        kfc = self._group_kfc(day)
+        if self.curves is None:
+            raise HubInputError("no model response curves")
+        self.signal = SD.measure_signal(self.curves, measured, kfc, names, now, sunrise)
+        decided = self._record_decisions(record, day, sunrise, kfc, now)
+        self._save()
+        return f"{stored} bands, signal {'valid' if self.signal.valid else 'invalid'}" + (
+            ", decision recorded" if decided else "")
+
+    def _group_kfc(self, day: str) -> dict[str, dict[int, float]]:
+        out: dict[str, dict[int, float]] = {}
+        for report in self.member_same_day.values():
+            if report["day"] == day and report["group"] not in out:
+                out[report["group"]] = dict(report["kfc"])
+        return out
+
+    async def _async_ensure_curves(self, day: str, now: datetime) -> bool:
+        """Response curves of today (rebuilt hourly: forecast temperatures
+        move). False while a member has not reported today."""
+        if (self.curves is not None and self.curves_key is not None and self.curves_key[0] == day
+                and now.timestamp() - self.curves_key[1] < CURVES_MAX_AGE.total_seconds()):
+            return True
+        keys = [k for k in L.local_day_hours(day, self.tz) if SD.clear_kt(k, self.latitude, self.longitude) > 0]
+        curves = SD.Curves()
+        for group in self.groups:
+            for member in group.members:
+                report = self.member_same_day.get(member)
+                coordinator = array_coordinator(self.hass, member)
+                if report is None or report["day"] != day or coordinator is None:
+                    return False
+                for index, k in enumerate(SD.K_GRID):
+                    records = SD.curve_records(keys, float(k), self.latitude, self.longitude)
+                    bands = await coordinator.async_model_bands(records, report["temps"], report["offset"])
+                    for ts, wh in bands.items():
+                        if L.key_to_dt(ts).astimezone(self.tz).date().isoformat() == day:
+                            curves.add(group.name, index, ts, wh / 1000.0)
+        self.curves = curves
+        self.curves_key = (day, now.timestamp())
+        return True
+
+    def _finalize_bands(self, record: dict[str, Any], sunrise: datetime, now: datetime) -> int:
+        """Measured energy and k of every completed band since sunrise."""
+        if self.curves is None:
+            return 0
+        first = int(sunrise.timestamp()) // SD.BAND_S * SD.BAND_S
+        last_end = int(now.timestamp()) // SD.BAND_S * SD.BAND_S
+        clear_index = int(np.searchsorted(SD.K_GRID, 1.0))
+        stored = 0
+        for start in range(first, last_end, SD.BAND_S):
+            key = str(start)
+            existing = record["bands"].get(key)
+            if existing is not None and all(v is not None for v in (existing.get("m") or {}).values()):
+                continue
+            measured: dict[str, float | None] = {}
+            for group in self.groups:
+                value = SD.band_energy(self.counters.get(group.name, []), start, start + SD.BAND_S,
+                                       self._counter_fresh_until(group.name), group.kwp)
+                measured[group.name] = None if value is None else round(value, 4)
+            complete = all(v is not None for v in measured.values())
+            if not complete and now.timestamp() - (start + SD.BAND_S) < 1800:
+                continue  # the counter may still report this band
+            curve = self.curves.total([start])
+            clear = float(SD.monotone(curve)[clear_index])
+            k = None
+            if complete and clear >= SD.BAND_MIN_CLEAR_KWH:
+                k = round(SD.invert(curve, sum(v for v in measured.values() if v is not None))[0], 4)
+            record["bands"][key] = {"m": measured, "c": round(clear, 4), "k": k}
+            stored += 1
+        return stored
+
+    def _record_decisions(
+        self, record: dict[str, Any], day: str, sunrise: datetime, kfc: Mapping[str, Mapping[int, float]],
+        now: datetime,
+    ) -> bool:
+        """At each decision time: the signal, the forecast k of the coming
+        hours and every group's remaining energy without / with / cautious."""
+        if self.curves is None or self.signal is None:
+            return False
+        recorded = False
+        names = [g.name for g in self.groups]
+        joint = SD.joint_kfc(self.curves, kfc, names)
+        for moment in SD.decision_times(day, self.tz, sunrise):
+            key = str(int(moment.timestamp()))
+            if key in record["decisions"] or not moment <= now < moment + DECISION_LATE_LIMIT:
+                continue
+            from_ts = int(moment.timestamp())
+            rem: dict[str, list[float | None]] = {}
+            for group in self.groups:
+                totals: list[float | None] = [0.0, 0.0, 0.0]
+                for member in group.members:
+                    report = self.member_same_day.get(member)
+                    if report is None or now - report["updated"] > MEMBER_REPORT_MAX_AGE:
+                        totals = [None, None, None]
+                        break
+                    for index, name in enumerate(("base", "sdc", "cautious")):
+                        bands = report["bands"][name]
+                        if name == "sdc" and bands is None:
+                            bands = report["bands"]["base"]
+                        current = totals[index]
+                        if bands is None or current is None:
+                            totals[index] = None
+                            continue
+                        totals[index] = current + sum(v for ts, v in bands.items() if ts >= from_ts)
+                rem[group.name] = [None if v is None else round(v, 4) for v in totals]
+            hour_from = from_ts // L.HOUR_S * L.HOUR_S
+            record["decisions"][key] = {
+                "e": None if not self.signal.valid or self.signal.e is None else round(self.signal.e, 4),
+                "sit": self.signal.situation,
+                "kfc": {str(h): round(v, 4) for h, v in joint.items() if h >= hour_from},
+                "rem": rem,
+            }
+            recorded = True
+        return recorded
+
+    async def _async_same_day_nightly(self, now: datetime) -> str:
+        today = now.astimezone(self.tz).date().isoformat()
+        view = self.data.view()
+        days = view.d["same_day"]["days"]
+        table = await self.hass.async_add_executor_job(SD.learn_table, days, today)
+        gate = await self.hass.async_add_executor_job(
+            SD.evaluate_gate, days, [g.name for g in self.groups], today, self.tz, now
+        )
+        section = self.data.d["same_day"]
+        before = self.same_day_applies
+        was_passed = self.same_day_gate_passed
+        section["table"] = {"computed": now.isoformat(), **table.to_json()}
+        section["gate"] = gate
+        section["gate_history"].append(
+            {k: gate[k] for k in ("evaluated", "days", "improvement", "better_recent", "passed")}
+        )
+        purged = SD.purge(section, today)
+        if gate["passed"] != was_passed:
+            self.data.event(now, "same_day_gate", ("passed: " if gate["passed"] else "not passed: ")
+                            + ("; ".join(gate["reasons"]) or f"improvement {gate['improvement']}"))
+        if before != self.same_day_applies:
+            self._refresh_members()
+        return f"{table.usable_days} usable days, check {'passed' if gate['passed'] else 'not passed'}, {purged} purged"
 
     # -- hourly run ---------------------------------------------------------------------------
 
@@ -712,12 +1083,12 @@ class LearningHub:
             L.compute_corrections, self.data.view(), predictors, now, self.tz
         )
         stored = self.data.archive_forecast(predictors, corrections, now)
-        captured = L.capture_issue6(self.data, predictors, corrections, now, self.tz)
+        captured = L.capture_issue6(self.data, predictors, corrections, now, self.tz, self.latitude, self.longitude)
         self.next_hours = self._summarise(predictors, corrections, now)
         self.evidence_info = await self.hass.async_add_executor_job(
             _evidence_summary, self.data.view(), now, self.tz
         )
-        return f"{stored} hours archived" + (", 06:00 forecast captured" if captured else "")
+        return f"{stored} hours archived" + (", decision forecast captured" if captured else "")
 
     async def _async_read_predictors(self, now: datetime) -> dict[int, L.Predictors]:
         if not self.irradiance_entity or not self.weather_entity:
@@ -775,6 +1146,8 @@ class LearningHub:
                 "ghi_corrected_w_m2": round(kt_c * pred.e0h),
                 "low_cloud": round(pred.low),
                 "mid_high_cloud": round(max(pred.mid, pred.high)),
+                "total_cloud": round(pred.total),  # 0.1.35: shown (used since 0.1.34.2)
+                "cell_temperature_c": round(L.cell_temperature(pred.temp, kt_c * pred.e0h) or 0.0, 1),
                 "spread_k": round(pred.temp - pred.dew, 1),
                 "elevation": round(pred.elevation, 1),
                 "analogs": corr.analogs,
@@ -818,6 +1191,7 @@ class LearningHub:
                 await self._step(report, "stage2", self._async_stage2(now))
             else:
                 report["stage2"] = "frozen"
+            await self._step(report, "same_day", self._async_same_day_nightly(now))
             gate = await self.hass.async_add_executor_job(
                 L.evaluate_gate, self.data.view(), self.groups, now, self.tz
             )
@@ -1007,7 +1381,11 @@ def _build_and_write_export(
         files[f"station_hours_{year}.csv"] = L.export_station_csv(data, year)
         files[f"production_{year}.csv"] = L.export_production_csv(data, year)
     files["days.csv"] = L.export_days_csv(data, groups, tz)
-    files["forecast_0600.csv"] = L.export_issue6_csv(data)
+    files["forecast_decision.csv"] = L.export_issue6_csv(data)
+    names = [g.name for g in groups]
+    d_rows, d_header, b_rows, b_header = SD.export_rows(data.d["same_day"], names)
+    files["same_day_decisions.csv"] = L._csv(d_rows, d_header)
+    files["same_day_bands.csv"] = L._csv(b_rows, b_header)
     files["events.csv"] = L.export_events_csv(data)
     settings = L.export_settings(data, groups, tz, latitude, longitude)
     settings["exported"] = now.isoformat()
@@ -1038,6 +1416,9 @@ def _write_export(base: Path, files: Mapping[str, str], oldest_year: int, oldest
     for path in (base / "snapshots").glob("model_*.json"):
         if path.stem[len("model_"):] < oldest_day:
             path.unlink()
+    legacy = base / "forecast_0600.csv"  # renamed in 0.1.35 (decision forecast)
+    if legacy.exists():
+        legacy.unlink()
     return len(files)
 
 

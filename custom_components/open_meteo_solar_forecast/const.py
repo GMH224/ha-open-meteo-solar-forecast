@@ -30,6 +30,7 @@ CONF_MODEL = "model"
 ATTR_WATTS = "watts"
 ATTR_WH_PERIOD = "wh_period"
 ATTR_WH_PERIOD_15M = "wh_period_15m"
+ATTR_WATTS_CAUTIOUS = "watts_cautious"  # 0.1.35
 
 # --- 0.1.33.2: local weather source -------------------------------------
 # See OMSF_v0_1_33_2_Architecture_ICS.md. "open_meteo" keeps the original behaviour and is

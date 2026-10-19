@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .learning_entities import ApplyLearningSwitch, FreezeLearningSwitch
+from .learning_entities import ApplyLearningSwitch, FreezeLearningSwitch, SameDaySwitch
 from .learning_hub import LearningHub
 from .runtime import SolarForecastConfigEntry, is_hub_entry
 
@@ -20,4 +20,4 @@ async def async_setup_entry(
     if not is_hub_entry(entry) or not isinstance(entry.runtime_data, LearningHub):
         return
     hub = entry.runtime_data
-    async_add_entities([ApplyLearningSwitch(hub), FreezeLearningSwitch(hub)])
+    async_add_entities([ApplyLearningSwitch(hub), FreezeLearningSwitch(hub), SameDaySwitch(hub)])

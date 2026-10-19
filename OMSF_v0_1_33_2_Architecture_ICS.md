@@ -11,6 +11,57 @@ also a hybrid of both.
 
 ---
 
+## 0e. Update for 0.1.35 — same-day correction
+
+Design record: [`OMSF_v0_1_35_Same_Day_Spec.md`](OMSF_v0_1_35_Same_Day_Spec.md); companion documents
+[`omsf_v0.1.35.0_release_audit.md`](omsf_v0.1.35.0_release_audit.md),
+[`omsf_v0_1_35_0_ICS_quality_bug_testing_report.md`](omsf_v0_1_35_0_ICS_quality_bug_testing_report.md).
+
+**Why.** The owner's battery automation sizes the charge limit at sunrise + 1 h (2027: also at checkpoints until
+the planned start). Errors that do not repeat (a closed deck the models expected to clear) are invisible to the
+weather learning but visible in the inverters' production from the first hour.
+
+**What.** New pure module `same_day.py`; the hub gains a 5-minute run (response curves of the members' own model on
+clear-sky-shaped light, counter bands, the measured clear-sky-index error ê, decision records), a nightly step
+(persistence table β/σ per lead bucket and situation, own check), a switch and three sensors. Members apply the
+correction on top of the forecast they would otherwise serve and publish `watts_cautious` once enough days exist.
+Stage 1's skill check now judges the decision forecast (sunrise + 1 h) instead of 06:00 (algorithm 3, store
+schema 3).
+
+```
+energy counters ──► hub (5 min): bands ─┐
+members' model on clear-sky light ──────┼─► ê (one number, all groups) ─► member refresh (10 min):
+members' served light (k_fc) ───────────┘        k̂ = k_fc + β(Δ)·ê ─► light shift ─► estimate (shadow / served)
+nightly: usable days ─► β, σ (no look-ahead) ─► check (7 days, ≥ 5 %, 5 of 7) ─► served only if passed AND switch on
+```
+
+**New requirements (traceability).**
+
+| ID | Requirement | Verified by |
+|---|---|---|
+| R42 | SDC served only with its check passed and its switch on; never on past hours or other days | `test_served_only_with_check_passed_and_switch_on`, `test_plan_touches_only_todays_remaining_hours`; M229, M230, M253, M254, M262 |
+| R43 | ê from the house's production through the members' own model (response-curve inversion), one value for all groups, valid only with ≥ 0.3 kWh clear-sky energy in the window | `test_signal_by_hand`, `test_signal_refused_*`, `test_grey_morning_*`; M221–M224, M228 |
+| R44 | Persistence learned by least squares, shrunk toward a 3-h prior, bounded, no look-ahead; matches the error model | `test_learn_table_by_hand`, `test_learned_persistence_matches_the_error_model`; M233–M237 |
+| R45 | Cautious bands at the 20th percentile, never above the served bands, only after 10 usable days, coverage shown | `test_corrected_and_cautious_index_by_hand`, `test_cautious_*`; M220, M247, M263 |
+| R46 | Untrusted counters: unit, sign, step bound, freshness | `test_band_energy_rules`, `test_counter_readings_*`, `test_a_band_waits_*`; M225–M227, M257, M258, M260 |
+| R47 | Decision forecast at sunrise + 1 h for stage 1; SDC judged at sunrise + 1 h, 10:00, 12:00 | `test_sunrise_by_hand`, `test_decision_*`, `test_eval_decisions`, `test_gate_by_hand`; M158, M238–M244, M248 |
+| R48 | Fail-safe: stale or failed signal never used; waiting for members is not a failure | `test_a_failing_run_*`, `test_nothing_happens_before_sunrise_*`; M255, M256, M261 |
+
+**New failure modes.**
+
+| ID | Condition | Behaviour |
+|---|---|---|
+| F28 | Energy counter missing, stale, negative or jumping | band unknown, signal invalid ("no counter reading"), no correction |
+| F29 | A member has not refreshed today (after restart) | run waits ("waiting for member refresh"), no correction |
+| F30 | Model run for the response curves fails | run fails visibly (event, `last_same_day`), signal cleared, no correction |
+| F31 | Same-day section malformed | the whole store is quarantined as in F25 |
+| F32 | Store of schema 2 (0.1.34.x) | migrated: 06:00 records dropped (not comparable), everything measured kept, same-day section empty, switch off; event `migrated` |
+
+**New limitations.** L-D1 the correction rests on the PV model's response to light; a large model error (snow on
+the modules, a new shadow) appears as weather and is corrected only for today. L-D2 Haurwitz clear sky is generic;
+very clear days saturate at k = 1.05 on both sides. L-D3 decision times missed while Home Assistant was down are not
+recorded later. L-D4 one ê for all groups: a shadow on one array only is averaged with the others.
+
 ## 0d. Update for 0.1.34 — learning hub
 
 Design record (algorithms, parameters, rationale):

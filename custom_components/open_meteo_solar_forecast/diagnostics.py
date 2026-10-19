@@ -66,6 +66,16 @@ async def async_get_config_entry_diagnostics(
     }
 
 
+def _same_day_today(hub: Any) -> dict[str, Any] | None:
+    """Today's decision records (bands are in the export)."""
+    days = hub.data.d["same_day"]["days"]
+    if not days:
+        return None
+    day = max(days)
+    record = days[day]
+    return {"day": day, "bands": len(record["bands"]), "decisions": record["decisions"]}
+
+
 def _hub_diagnostics(hub: Any, entry: ConfigEntry) -> dict[str, Any]:
     """0.1.34: everything the learner decides with, except raw hour data
     (that is in the export folder). No paths, no coordinates."""
@@ -98,7 +108,9 @@ def _hub_diagnostics(hub: Any, entry: ConfigEntry) -> dict[str, Any]:
             "days_by_status": statuses,
             "production_hours": {g: len(h) for g, h in d["production"].items()},
             "model_hours": {g: len(h) for g, h in d["model"].items()},
-            "forecasts_0600": len(d["issue6"]),
+            "decision_forecasts": len(d["issue6"]),
+            "counter_readings": {g: len(s) for g, s in hub.counters.items()},
+            "same_day_days": len(d["same_day"]["days"]),
         },
         "evidence": hub.evidence_info,
         "gate": d["gate"],
@@ -110,6 +122,17 @@ def _hub_diagnostics(hub: Any, entry: ConfigEntry) -> dict[str, Any]:
         "last_startup": hub.last_startup,
         "entry_reports": hub.entry_reports,
         "next_hours": hub.next_hours,
+        "same_day": {
+            "state": hub.same_day_state,
+            "served": hub.same_day_applies,
+            "signal": None if hub.signal is None else hub.signal.as_dict(),
+            "last_run": {k: (v.isoformat() if hasattr(v, "isoformat") else v)
+                         for k, v in hub.last_same_day.items()},
+            "table": d["same_day"].get("table"),
+            "gate": d["same_day"].get("gate"),
+            "gate_history": d["same_day"].get("gate_history"),
+            "today": _same_day_today(hub),
+        },
         "events": d["events"],
     }
 

@@ -206,6 +206,15 @@
       },
       "calibration": {
         "name": "Kalibrierung {group}"
+      },
+      "same_day_correction": {
+        "name": "Tageskorrektur"
+      },
+      "same_day_improvement": {
+        "name": "Verbesserung Tageskorrektur"
+      },
+      "cautious_coverage": {
+        "name": "Abdeckung vorsichtige Prognose"
       }
     },
     "switch": {
@@ -214,6 +223,9 @@
       },
       "freeze_learning": {
         "name": "Lernen einfrieren"
+      },
+      "same_day_switch": {
+        "name": "Tageskorrektur"
       }
     }
   },

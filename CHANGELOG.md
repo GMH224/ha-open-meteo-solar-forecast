@@ -1,6 +1,42 @@
 # Changelog — GMH224 fork
 
-## Unreleased — public-repository clean-up (2026-10-15, no version change)
+## 0.1.35.0 — 2026-10-19 — same-day correction
+
+Design record: `OMSF_v0_1_35_Same_Day_Spec.md` (confirmed by the owner on
+19 Oct 2026). Release audit: `omsf_v0.1.35.0_release_audit.md`.
+
+### Added (learning hub)
+- **Same-day correction:** every 5 minutes after sunrise the hub measures
+  how much darker or brighter the sky at the house is than forecast, from the
+  last hour of the inverters' energy counters through the members' own PV
+  model (response curves on clear-sky-shaped light). Today's remaining hours
+  are pulled towards it; how strongly and for how long is learned from the
+  owner's days (least squares, shrunk toward a 3-hour half-life, separately
+  for "forecast expects clearing" and other days).
+- Acts only with its **own nightly check** passed (≥ 7 usable days, ≥ 5 %
+  smaller remaining-day energy error at sunrise + 1 h, 10:00 and 12:00, better
+  on 5 of the last 7 days) **and** the new switch *Same-day correction* on.
+  Shadow until then.
+- **`watts_cautious`** on today's energy sensor after 10 usable days: the
+  bands at about the 20th percentile, never above `watts`; sensor *Cautious
+  coverage* shows how often reality fell below them.
+- Sensors *Same-day correction*, *Same-day improvement*, *Cautious coverage*;
+  example dashboard card; diagnostics; export `same_day_decisions.csv`,
+  `same_day_bands.csv`; replay tool recomputes the persistence table.
+- `next_hours` shows total cloud and estimated cell temperature.
+
+### Changed
+- The weather learning's skill check judges the **decision forecast** (first
+  run from sunrise + 1 h on) instead of 06:00 (algorithm 3). Export file
+  `forecast_0600.csv` is now `forecast_decision.csv` (the old file is removed).
+
+### Upgrade note
+- Store schema 3: the 06:00 records are dropped (not comparable); everything
+  measured, the switches and the event log are kept. The weather learning's
+  14-day count restarts. The same-day correction starts collecting at once;
+  its switch is off.
+
+## 0.1.34.2 clean-up — public repository (2026-10-15, no version change)
 
 - Private installation data removed from the public files: test locations
   near the owner's home replaced by a neutral public location (Zurich city

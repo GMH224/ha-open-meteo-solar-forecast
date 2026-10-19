@@ -33,6 +33,7 @@ from .const import (
     ATTR_WATTS,
     ATTR_WH_PERIOD,
     ATTR_WH_PERIOD_15M,
+    ATTR_WATTS_CAUTIOUS,
     DOMAIN,
 )
 from .coordinator import OpenMeteoSolarForecastDataUpdateCoordinator
@@ -456,6 +457,16 @@ class OpenMeteoSolarForecastSensorEntity(
                     if wh_datetime.date() == target_date
                 },
             }
+            # 0.1.35: cautious bands of today (learning hub with enough
+            # same-day evidence); never above the served bands.
+            cautious = getattr(self.coordinator, "cautious_estimate", None)
+            if cautious is not None and target_date == self.coordinator.data.now().date():
+                served = self.coordinator.data.watts
+                attributes[ATTR_WATTS_CAUTIOUS] = {
+                    moment.isoformat(): min(value, served.get(moment, value))
+                    for moment, value in cautious.watts.items()
+                    if moment.date() == target_date
+                }
             # 0.1.33.3: which source produced this day (local / hybrid mode
             # only; Open-Meteo mode attributes are unchanged).
             day_sources = self.coordinator.day_sources

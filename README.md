@@ -283,8 +283,10 @@ season a year earlier keeps at least 70 %, so what was learned last autumn
 is used again next autumn.
 
 It **starts neutral** and changes your forecast only when **both** hold:
-the nightly skill check over the last 28 days shows the corrected 06:00
-forecast to be at least 5 % better against the station (and the daily
+the nightly skill check over the last 28 days shows the corrected
+*decision forecast* (the first run from sunrise + 1 h on, when a battery
+automation typically decides; 06:00 before 0.1.35) to be at least 5 % better
+against the station (and the daily
 energy error not worse), **and** you have switched *Apply learning* on.
 If the check later fails, it falls back to the raw forecast by itself.
 Any fault in the learner leaves the forecast raw; it never stops a forecast.
@@ -313,11 +315,15 @@ measures (e.g. West and South). Your PV entries are not changed.
 | `sensor.solar_forecast_learning_next_hours` | for each of the next 36 h: forecast vs corrected light, the predictors and the five most similar past hours - the *why* of every correction |
 | `sensor.solar_forecast_learning_irradiance_improvement` | skill check result (%), with the raw and corrected errors |
 | `sensor.solar_forecast_learning_<group>_correction_today` / `_tomorrow` | kWh corrected minus raw for that inverter |
-| `sensor.solar_forecast_learning_<group>_energy_error` | mean daily energy error of the corrected 06:00 forecast |
+| `sensor.solar_forecast_learning_<group>_energy_error` | mean daily energy error of the corrected decision forecast |
 | `sensor.solar_forecast_learning_<group>_calibration` | stage-2 factors; attribute `suggested_efficiency_change_percent` |
 | `sensor.solar_forecast_learning_station_correlation` | is the station representative of your roof? (learning pauses below 0.85) |
 | `sensor.solar_forecast_learning_station_albedo` | reflected / global light at the station; above 0.4: snow on the ground (days excluded) |
 | `sensor.solar_forecast_learning_evidence`, `_last_run` | how much evidence exists; the last nightly run with each step's outcome |
+| `switch.solar_forecast_learning_same_day_switch` | your authority over the same-day correction (below) |
+| `sensor.solar_forecast_learning_same_day_correction` | the measured error now (clear-sky index); attributes: state, signal, learned persistence |
+| `sensor.solar_forecast_learning_same_day_improvement` | its check: remaining-day energy error with vs without (%) |
+| `sensor.solar_forecast_learning_cautious_coverage` | how often the real rest of the day fell below the cautious bands (target about 20 %) |
 
 Every PV entry's `forecast_source` sensor shows a `learning` attribute with
 the raw and corrected totals side by side, so the raw forecast is always
@@ -335,6 +341,35 @@ export with an independent implementation.
 the learned data.
 
 **Dashboard:** `examples/dashboard/learning.yaml` (core cards only).
+
+### Same-day correction (0.1.35)
+
+The weather learning corrects *repeating* errors of the morning forecast. A
+day like a closed cloud deck that the models expected to clear is a one-off
+miss - but it shows in your production from the first hour. The same-day
+correction uses that:
+
+- Every 5 minutes after sunrise it compares the last hour of production
+  (your inverters' energy counters) with what your own PV model gives for
+  that hour under a clear sky and under the forecast sky. The result is one
+  number, how much darker or brighter the sky is than forecast (from
+  sunrise + 30 min, when a waking inverter has started).
+- Today's remaining hours are pulled towards that measurement, most for the
+  next hours. How strongly and for how long is **learned from your own
+  days** (separately for "the forecast expects it to clear" and other days),
+  starting from a 3-hour half-life.
+- It acts only when its own nightly check passes (at least 7 days, at least
+  5 % smaller error of the remaining-day energy at sunrise + 1 h, 10:00 and
+  12:00, better on 5 of the last 7 days) **and** you switch
+  *Same-day correction* on. Before that it runs in shadow.
+- After 10 usable days, today's energy sensor also carries
+  `watts_cautious`: the same 15-minute bands at the cautious end (about the
+  20th percentile of what similar situations delivered), never above
+  `watts`. A battery automation can use it instead of a fixed safety
+  margin.
+
+Requirements as above (energy counters that update during the day). Design
+record: `OMSF_v0_1_35_Same_Day_Spec.md`.
 
 **What to expect:** two weeks of collecting; corrections for common autumn
 situations (fog/stratus, broken cloud) after 3-6 weeks; broad coverage after

@@ -10,7 +10,8 @@ Applies from v0.1.33.2 (updated for 0.1.34 / 0.1.34.1). Architecture and rationa
 | `__init__.py` | entry setup / unload / removal (also deletes the local history store); services; 0.1.34: two entry types (PV array, learning hub), each owning its runtime object in `runtime_data` | yes |
 | `runtime.py` | typed entry aliases (`ArrayConfigEntry`, `HubConfigEntry`), TypedDict models, loaded-entry lookups (0.1.34) | yes (types only) |
 | `learning.py` | **pure** learning engine: parsing, predictors, archive, analog ensemble, application, stage 2, quality control, gate, state, store (de)serialisation, export text (0.1.34) | **no** (enforced by test) |
-| `learning_hub.py` | HA glue for learning: store, station listener, hourly/nightly runs, recorder statistics, coordinator interface, export files (0.1.34) | yes |
+| `same_day.py` | **pure** same-day correction engine: clear-sky index, response curves and inversion, counter bands, signal, persistence table (β, σ), cautious index, decision times, check, store section (0.1.35) | **no** (enforced by test) |
+| `learning_hub.py` | HA glue for learning: store, station and counter listeners, hourly/nightly/5-minute runs, recorder statistics, coordinator interface, export files (0.1.34; same-day 0.1.35) | yes |
 | `learning_entities.py`, `switch.py` | hub sensors and switches (0.1.34) | yes |
 | `config_flow.py` | setup + options wizard; `local` step, validation, auto-discovery | yes |
 | `coordinator.py` | refresh cycle; source selection; retained forecast; fallback policy; day coverage | yes |
@@ -85,6 +86,14 @@ suite before changing the pin.**
     `confidential.md` **outside** the repository (`../confidential.md`;
     git-ignored and `export-ignore` if copied in); `tests/test_public_release.py`
     fails if any string of its *Never publish* list appears in a file.
+
+14. Same-day correction (0.1.35): it acts only on top of the forecast that
+    would otherwise be served, only on today's remaining hours, only with
+    its own check passed **and** its switch on (M253, M254, M262, M229,
+    M230). A signal older than 15 min or from a failed run is never used
+    (M255, M256). Its learning uses only days before the day it is applied
+    to (M233, M240). Untrusted counter readings: unit, sign, step and
+    freshness checked (M225–M227, M257, M258).
 
 ## Running the tests
 

@@ -25,6 +25,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
 from . import learning as L
+from . import same_day as SD
 from .const import ATTR_LEARNING_HOURS, DOMAIN
 from .learning_hub import LearningHub
 
@@ -227,6 +228,66 @@ def _last_run_attributes(hub: LearningHub, _group: str | None) -> dict[str, Any]
     }
 
 
+def _same_day_gate(hub: LearningHub) -> dict[str, Any]:
+    return hub.data.d["same_day"].get("gate") or {}
+
+
+def _same_day_value(hub: LearningHub, _group: str | None) -> float | None:
+    signal = hub.signal
+    if signal is None or not signal.valid or signal.e is None:
+        return None
+    return round(signal.e, 3)
+
+
+def _same_day_attributes(hub: LearningHub, _group: str | None) -> dict[str, Any]:
+    table = hub.data.d["same_day"].get("table")
+    return {
+        "state": hub.same_day_state,
+        "switch": hub.data.same_day_switch,
+        "served": hub.same_day_applies,
+        "signal": None if hub.signal is None else hub.signal.as_dict(),
+        "computed": None if hub.last_same_day.get("signal_time") is None
+        else hub.last_same_day["signal_time"].isoformat(),
+        "beta": None if table is None else table.get("beta"),
+        "sigma": None if table is None else table.get("sigma"),
+        "lead_buckets": list(SD.BUCKET_LABELS),
+        "prior_beta": list(SD.PRIOR_BETA),
+        "usable_days": None if table is None else table.get("usable_days"),
+        "last_run": {k: v for k, v in hub.last_same_day.items() if k != "signal_time"},
+    }
+
+
+def _same_day_improvement(hub: LearningHub, _group: str | None) -> float | None:
+    value = _same_day_gate(hub).get("improvement")
+    return None if value is None else round(value * 100, 1)
+
+
+def _same_day_gate_attributes(hub: LearningHub, _group: str | None) -> dict[str, Any]:
+    gate = dict(_same_day_gate(hub))
+    gate["required_improvement_percent"] = SD.GATE_MIN_IMPROVEMENT * 100
+    gate["required_days"] = SD.GATE_MIN_DAYS
+    gate["required_better_recent"] = f"{SD.GATE_RECENT_BETTER} of {SD.GATE_RECENT_DAYS}"
+    return gate
+
+
+def _coverage(hub: LearningHub, _group: str | None) -> float | None:
+    value = _same_day_gate(hub).get("cautious_coverage")
+    return None if value is None else round(value * 100, 1)
+
+
+def _coverage_attributes(hub: LearningHub, _group: str | None) -> dict[str, Any]:
+    gate = _same_day_gate(hub)
+    table = hub.data.d["same_day"].get("table") or {}
+    return {
+        "target_percent": 20.0,
+        "checked": gate.get("cautious_checked"),
+        "below": gate.get("cautious_below"),
+        "published": (table.get("usable_days") or 0) >= SD.CAUTIOUS_MIN_DAYS,
+        "required_days": SD.CAUTIOUS_MIN_DAYS,
+        "usable_days": table.get("usable_days"),
+    }
+
+
 SENSORS: tuple[HubSensorDescription, ...] = (
     HubSensorDescription(
         key="state", translation_key="state", device_class=SensorDeviceClass.ENUM,
@@ -277,6 +338,20 @@ SENSORS: tuple[HubSensorDescription, ...] = (
     HubSensorDescription(
         key="calibration", translation_key="calibration", per_group=True,
         state_class=SensorStateClass.MEASUREMENT, value=_calibration_value, attributes=_calibration_attributes,
+    ),
+    HubSensorDescription(
+        key="same_day_correction", translation_key="same_day_correction",
+        state_class=SensorStateClass.MEASUREMENT, value=_same_day_value, attributes=_same_day_attributes,
+    ),
+    HubSensorDescription(
+        key="same_day_improvement", translation_key="same_day_improvement",
+        state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement=PERCENTAGE,
+        value=_same_day_improvement, attributes=_same_day_gate_attributes,
+    ),
+    HubSensorDescription(
+        key="cautious_coverage", translation_key="cautious_coverage",
+        state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement=PERCENTAGE,
+        value=_coverage, attributes=_coverage_attributes, entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
 
@@ -361,3 +436,28 @@ class FreezeLearningSwitch(HubEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.hub.async_set_frozen(False)
 
+
+
+class SameDaySwitch(HubEntity, SwitchEntity):
+    """Owner's authority over the same-day correction (0.1.35): it acts
+    only when this is on AND its own check has passed."""
+
+    platform_domain = "switch"
+
+    def __init__(self, hub: LearningHub) -> None:
+        super().__init__(hub, "same_day_switch")
+
+    @property
+    def is_on(self) -> bool:
+        return self.hub.data.same_day_switch
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"state": self.hub.same_day_state,
+                "changed": self.hub.data.d["settings"].get("same_day_changed")}
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.hub.async_set_same_day(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.hub.async_set_same_day(False)

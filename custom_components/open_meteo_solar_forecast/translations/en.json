@@ -225,6 +225,15 @@
       },
       "calibration": {
         "name": "Calibration {group}"
+      },
+      "same_day_correction": {
+        "name": "Same-day correction"
+      },
+      "same_day_improvement": {
+        "name": "Same-day improvement"
+      },
+      "cautious_coverage": {
+        "name": "Cautious coverage"
       }
     },
     "switch": {
@@ -233,6 +242,9 @@
       },
       "freeze_learning": {
         "name": "Freeze learning"
+      },
+      "same_day_switch": {
+        "name": "Same-day correction"
       }
     }
   },

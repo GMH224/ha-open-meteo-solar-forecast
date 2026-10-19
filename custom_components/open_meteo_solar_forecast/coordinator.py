@@ -6,7 +6,8 @@ import asyncio
 import io
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, cast
 
@@ -418,6 +419,8 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         # 0.1.34: learning (OMSF_v0_1_34_Learning_Spec.md). None = this entry
         # is not a member of an inverter group: behaviour as in 0.1.33.5.
         self.learning_report: LearningReport | None = None
+        # 0.1.35: cautious bands of today (``watts_cautious``), when published.
+        self.cautious_estimate: Estimate | None = None
         self._forecast_kwargs = forecast_kwargs
         self._active_shading = active_shading
         if self.uses_local:
@@ -711,6 +714,7 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         """
         from .learning_hub import get_hub  # local import: avoids a cycle
 
+        self.cautious_estimate = None
         hub = get_hub(self.hass)
         group = hub.group_for(self.config_entry.entry_id) if hub is not None else None
         reader = self.local_reader
@@ -751,6 +755,16 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         today = dt_util.as_local(now).date()
         tomorrow = today + timedelta(days=1)
         raw_days, corr_days = _day_totals(raw), _day_totals(estimate_corr)
+        corr_shading = self.local_forecast.shading_stats
+        base_snapshot = corrected[0] if applies else snapshot
+        base_estimate, base_stats, base_shading = (
+            (estimate_corr, corr_stats, corr_shading) if applies else (raw, raw_stats, raw_shading)
+        )
+        served, served_stats, served_shading = base_estimate, base_stats, base_shading
+        same_day = await self._async_same_day(hub, base_snapshot, base_estimate, now)
+        self.cautious_estimate = same_day["cautious"]
+        if same_day["estimate"] is not None and hub.same_day_applies:
+            served, served_stats, served_shading = same_day["estimate"], same_day["stats"], same_day["shading"]
         self.learning_report = LearningReport(
             group=group.name,
             state=hub.state,
@@ -760,13 +774,51 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             today_corrected_wh=corr_days.get(today),
             tomorrow_raw_wh=raw_days.get(tomorrow),
             tomorrow_corrected_wh=corr_days.get(tomorrow),
+            same_day=same_day["report"],
         )
-        if applies:
-            self.last_local_stats = corr_stats
-            return estimate_corr
-        self.local_forecast.shading_stats = raw_shading
-        self.last_local_stats = raw_stats
-        return raw
+        self.local_forecast.shading_stats = served_shading
+        self.last_local_stats = served_stats
+        return served
+
+    async def _async_same_day(
+        self, hub: Any, base_snapshot: LocalSnapshot, base_estimate: Estimate, now: datetime
+    ) -> dict[str, Any]:
+        """Same-day correction (0.1.35) on top of the forecast that would be
+        served without it. Always computed for a group member (shadow), so
+        the hub can judge it; served only when the hub says so. Any failure
+        leaves the forecast as it was."""
+        result: dict[str, Any] = {"estimate": None, "stats": None, "shading": None, "cautious": None,
+                                  "report": None}
+        if self.local_forecast is None or self.config_entry is None:
+            return result
+        today = dt_util.as_local(now).date()
+        try:
+            async with asyncio.timeout(LEARNING_TIMEOUT_SECONDS):
+                served_hours, cautious_hours, info = await hub.async_same_day_plan(base_snapshot.hours, now)
+                if served_hours is not None:
+                    self.local_forecast.prepare(self.hass, replace(base_snapshot, hours=served_hours))
+                    result["estimate"] = await self.local_forecast.estimate()
+                    result["stats"] = list(self.local_forecast.local_stats or [])
+                    result["shading"] = self.local_forecast.shading_stats
+                if cautious_hours is not None:
+                    self.local_forecast.prepare(self.hass, replace(base_snapshot, hours=cautious_hours))
+                    result["cautious"] = await self.local_forecast.estimate()
+            hub.report_same_day(
+                self.config_entry.entry_id, base_snapshot, base_estimate, result["estimate"], result["cautious"], now
+            )
+        except Exception as err:  # noqa: BLE001 - fail-safe: forecast unchanged
+            LOGGER.warning("Same-day correction failed, forecast unchanged: %s", sanitize_error(err))
+            return {"estimate": None, "stats": None, "shading": None, "cautious": None,
+                    "report": {"served": False, "error": f"{type(err).__name__}: {sanitize_error(err)}"}}
+        with_sdc = _day_totals(result["estimate"]).get(today) if result["estimate"] is not None else None
+        result["report"] = {
+            **info,
+            "served": result["estimate"] is not None and hub.same_day_applies,
+            "today_without_wh": _day_totals(base_estimate).get(today),
+            "today_with_wh": with_sdc,
+            "cautious_published": result["cautious"] is not None,
+        }
+        return result
 
     async def async_model_hours(
         self,
@@ -779,6 +831,33 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         irradiance (learning stage 2, 0.1.34). A separate library instance,
         so the live forecast object is never touched. ``shading=False``
         leaves the shading geometry out (0.1.34.2: shaded-hour check)."""
+        if not self.uses_local:
+            raise LocalDataError("entry does not use the local weather source")
+        estimate = await self._async_model_estimate(records, temperatures, utc_offset_seconds, shading)
+        result: dict[int, float] = {}
+        for moment, wh in estimate.wh_period.items():
+            ts = int(moment.timestamp())
+            result[ts - ts % 3600] = float(wh)
+        return result
+
+    async def async_model_bands(
+        self,
+        records: dict[datetime, HourRecord],
+        temperatures: Mapping[datetime, float],
+        utc_offset_seconds: int,
+    ) -> dict[int, float]:
+        """Energy per 15-minute band (UTC start, Wh) of this entry's model
+        for the given light (same-day correction response curves, 0.1.35)."""
+        estimate = await self._async_model_estimate(records, dict(temperatures), utc_offset_seconds, True)
+        return {int(moment.timestamp()): float(wh) for moment, wh in estimate.wh_period_15m.items()}
+
+    async def _async_model_estimate(
+        self,
+        records: dict[datetime, HourRecord],
+        temperatures: dict[datetime, float],
+        utc_offset_seconds: int,
+        shading: bool,
+    ) -> Estimate:
         if not self.uses_local:
             raise LocalDataError("entry does not use the local weather source")
         forecast = LocalOpenMeteoSolarForecast(**self._forecast_kwargs)
@@ -794,12 +873,7 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         )
         forecast.prepare(self.hass, snapshot)
         async with asyncio.timeout(API_TIMEOUT_SECONDS):
-            estimate = await forecast.estimate()
-        result: dict[int, float] = {}
-        for moment, wh in estimate.wh_period.items():
-            ts = int(moment.timestamp())
-            result[ts - ts % 3600] = float(wh)
-        return result
+            return await forecast.estimate()
 
     @property
     def has_shading(self) -> bool:

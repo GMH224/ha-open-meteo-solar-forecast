@@ -65,12 +65,13 @@ from .local_source import (
 # Parameters (all documented in the specification, section in brackets)
 # --------------------------------------------------------------------------
 
-ALGORITHM_VERSION = 2
+ALGORITHM_VERSION = 3
 """2 (0.1.34.2): total cloud as a predictor; stage 2 by sky type and
-temperature band over all stored data; longer memory."""
+temperature band over all stored data; longer memory. 3 (0.1.35): the skill
+gate judges the decision forecast (sunrise + 1 h) instead of 06:00."""
 """Bumped whenever a change alters corrections; the gate restarts (§9)."""
 
-STORE_SCHEMA_VERSION = 2  # 2: archive rows carry total cloud (1 is migrated)
+STORE_SCHEMA_VERSION = 3  # 2: archive rows carry total cloud; 3: same-day section (older are migrated)
 
 HOUR_S = 3600
 DAY_S = 86400
@@ -150,7 +151,10 @@ GATE_MIN_DAYS = 14
 GATE_MIN_HOURS_PER_DAY = 4
 GATE_MIN_IMPROVEMENT = 0.05
 GATE_ENERGY_TOLERANCE = 0.01
-SUNRISE_ISSUE_HOUR = 6  # local time of the "sunrise view" (owner, 12 Oct 2026)
+DECISION_AFTER_SUNRISE_S = 3600
+"""0.1.35: the gate's "decision forecast" is the first run at/after sunrise +
+1 h (the owner's battery automation runs then); 0.1.34: 06:00 local."""
+SUNRISE_ELEVATION_DEG = -0.833  # standard sunrise (refraction and solar radius)
 
 DAY_RATIO_MIN = 0.6
 DAY_RATIO_MAX = 1.4
@@ -549,7 +553,7 @@ def _new_data() -> dict[str, Any]:
         "schema": STORE_SCHEMA_VERSION,
         "algorithm": ALGORITHM_VERSION,
         "created": None,
-        "settings": {"apply": False, "apply_changed": None},
+        "settings": {"apply": False, "apply_changed": None, "same_day": False},
         "freeze": [],  # [[start_ts, end_ts|None], ...]
         "resets": [],  # [[ts, "stage1"|"stage2"], ...]: evidence decided earlier is ignored
         "station_samples": {},  # end_ts -> [ghi, dhi, sun, lw, refl, temp]
@@ -571,6 +575,7 @@ def _new_data() -> dict[str, Any]:
         "last_nightly": None,
         "production_backfilled": [],
         "purged_before": None,  # newest retention limit applied (epoch s)
+        "same_day": {"days": {}, "table": None, "gate": None, "gate_history": []},  # 0.1.35
     }
 
 
@@ -592,6 +597,22 @@ def _migrate_1_to_2(raw: dict[str, Any]) -> dict[str, Any]:
     out["stage2_history"] = []
     out["gate"] = None
     out["model_free"] = {}  # filled for the last days by the next nightly run
+    return out
+
+
+def _migrate_2_to_3(raw: dict[str, Any]) -> dict[str, Any]:
+    """0.1.35: the gate judges the decision forecast (sunrise + 1 h); the
+    06:00 records are not comparable and are dropped. Everything measured is
+    kept; the same-day section starts empty."""
+    out = dict(raw)
+    out["schema"] = 3
+    out["issue6"] = {}
+    out["entry_days"] = {}
+    out["gate"] = None
+    out["same_day"] = {"days": {}, "table": None, "gate": None, "gate_history": []}
+    settings = dict(out.get("settings") or {})
+    settings.setdefault("same_day", False)
+    out["settings"] = settings
     return out
 
 
@@ -649,9 +670,11 @@ class LearningData:
     @classmethod
     def _from_json(cls, raw: Any) -> LearningData:
         _require(isinstance(raw, dict), "root is not a mapping")
-        migrated = raw.get("schema") == 1
-        if migrated:
+        migrated_from = raw.get("schema") if raw.get("schema") in (1, 2) else None
+        if raw.get("schema") == 1:
             raw = _migrate_1_to_2(raw)
+        if raw.get("schema") == 2:
+            raw = _migrate_2_to_3(raw)
         _require(raw.get("schema") == STORE_SCHEMA_VERSION, "unknown schema version")
         data = _new_data()
         for key in data:
@@ -659,6 +682,14 @@ class LearningData:
                 data[key] = raw[key]
         settings = data["settings"]
         _require(isinstance(settings, dict) and isinstance(settings.get("apply"), bool), "settings")
+        settings.setdefault("same_day", False)
+        _require(isinstance(settings.get("same_day"), bool), "settings same_day")
+        from .same_day import SameDayDataError, validate_section  # pure; late import avoids a cycle
+
+        try:
+            data["same_day"] = validate_section(data["same_day"])
+        except SameDayDataError as err:
+            raise LearningDataError(str(err)) from err
         _require(isinstance(data["freeze"], list), "freeze")
         for interval in data["freeze"]:
             _require(isinstance(interval, list) and len(interval) == 2, "freeze interval")
@@ -735,7 +766,7 @@ class LearningData:
                 )
         _require(data["state"].get("state") in STATES, "state")
         result = cls(data)
-        result.migrated_from = 1 if migrated else None
+        result.migrated_from = migrated_from
         return result
 
     def to_json(self) -> dict[str, Any]:
@@ -776,6 +807,15 @@ class LearningData:
         d["resets"] = [list(item) for item in self.d["resets"]]
         d["station_samples"] = {}  # live buffer; not used by any computation
         d["events"] = list(self.d["events"])
+        section = self.d["same_day"]
+        d["same_day"] = {
+            **section,
+            "days": {
+                day: {"bands": dict(record.get("bands", {})), "decisions": dict(record.get("decisions", {}))}
+                for day, record in section["days"].items()
+            },
+            "gate_history": list(section["gate_history"]),
+        }
         return LearningData(d)
 
     # -- events ------------------------------------------------------------
@@ -798,6 +838,19 @@ class LearningData:
         self.d["settings"]["apply_changed"] = now.astimezone(timezone.utc).isoformat()
         self.event(now, "apply_on" if value else "apply_off",
                    "owner switched learning " + ("on" if value else "off"))
+        return True
+
+    @property
+    def same_day_switch(self) -> bool:
+        return bool(self.d["settings"].get("same_day", False))
+
+    def set_same_day(self, value: bool, now: datetime) -> bool:
+        if self.same_day_switch == value:
+            return False
+        self.d["settings"]["same_day"] = value
+        self.d["settings"]["same_day_changed"] = now.astimezone(timezone.utc).isoformat()
+        self.event(now, "same_day_on" if value else "same_day_off",
+                   "owner switched the same-day correction " + ("on" if value else "off"))
         return True
 
     @property
@@ -1395,17 +1448,49 @@ def representativeness(
 # --------------------------------------------------------------------------
 
 
+_SUNRISE_CACHE: dict[tuple[str, str, float, float], datetime | None] = {}
+
+
+def sunrise_utc(day: str, tz: tzinfo, latitude: float, longitude: float) -> datetime | None:
+    """First 2-minute step of the local day with the sun above -0.833°
+    (standard sunrise); None in polar night."""
+    cache_key = (day, str(tz), round(latitude, 3), round(longitude, 3))
+    if cache_key in _SUNRISE_CACHE:
+        return _SUNRISE_CACHE[cache_key]
+    start = datetime.combine(date.fromisoformat(day), datetime.min.time(), tz).astimezone(timezone.utc)
+    result = None
+    for minute in range(0, 24 * 60, 2):
+        moment = start + timedelta(minutes=minute)
+        cz = sun_position(moment, latitude, longitude).cos_zenith
+        if math.degrees(math.asin(_clamp(cz, -1.0, 1.0))) >= SUNRISE_ELEVATION_DEG:
+            result = moment
+            break
+    if len(_SUNRISE_CACHE) > 1000:
+        _SUNRISE_CACHE.clear()
+    _SUNRISE_CACHE[cache_key] = result
+    return result
+
+
+def decision_due(now: datetime, tz: tzinfo, latitude: float, longitude: float) -> bool:
+    """True from sunrise + 1 h on (the decision forecast of the day)."""
+    sunrise = sunrise_utc(now.astimezone(tz).date().isoformat(), tz, latitude, longitude)
+    return sunrise is not None and now >= sunrise + timedelta(seconds=DECISION_AFTER_SUNRISE_S)
+
+
 def capture_issue6(
     data: LearningData,
     predictors: Mapping[int, Predictors],
     corrections: Mapping[int, Correction],
     now: datetime,
     tz: tzinfo,
+    latitude: float,
+    longitude: float,
 ) -> bool:
-    """Keep the forecast of the first run at/after 06:00 local per day."""
-    local_now = now.astimezone(tz)
-    if local_now.hour < SUNRISE_ISSUE_HOUR:
+    """Keep the decision forecast: the first run at/after sunrise + 1 h per
+    day (0.1.35; the store key keeps its 0.1.34 name ``issue6``)."""
+    if not decision_due(now, tz, latitude, longitude):
         return False
+    local_now = now.astimezone(tz)
     day = local_now.date().isoformat()
     if day in data.d["issue6"]:
         return False
@@ -1422,12 +1507,13 @@ def capture_issue6(
 
 
 def record_entry_day(
-    data: LearningData, entry_id: str, day: str, raw_wh: float, corr_wh: float, now: datetime, tz: tzinfo
+    data: LearningData, entry_id: str, day: str, raw_wh: float, corr_wh: float, now: datetime, tz: tzinfo,
+    latitude: float, longitude: float,
 ) -> bool:
-    """Keep each entry's first forecast of ``day`` made at/after 06:00 local
+    """Keep each entry's first forecast of ``day`` made at/after sunrise + 1 h
     on that same day (the energy half of the gate)."""
     local_now = now.astimezone(tz)
-    if local_now.hour < SUNRISE_ISSUE_HOUR or local_now.date().isoformat() != day:
+    if not decision_due(now, tz, latitude, longitude) or local_now.date().isoformat() != day:
         return False
     entries = data.d["entry_days"].setdefault(day, {})
     if entry_id in entries:
@@ -1442,7 +1528,8 @@ def evaluate_gate(
     now: datetime,
     tz: tzinfo,
 ) -> dict[str, Any]:
-    """Out-of-sample skill of the 06:00 forecasts over the last 28 days."""
+    """Out-of-sample skill of the decision forecasts (sunrise + 1 h) over
+    the last 28 days."""
     today = now.astimezone(tz).date()
     groups = list(groups)
     err_raw: list[float] = []
@@ -1517,7 +1604,8 @@ def evaluate_gate(
         reasons.append("no inverter group configured")
     irr_ok = days_irr >= GATE_MIN_DAYS and improvement is not None and improvement >= GATE_MIN_IMPROVEMENT
     if days_irr < GATE_MIN_DAYS:
-        reasons.insert(0, f"{days_irr}/{GATE_MIN_DAYS} days with a complete 06:00 forecast and measurement")
+        reasons.insert(0, f"{days_irr}/{GATE_MIN_DAYS} days with a complete decision forecast "
+                       "(sunrise + 1 h) and measurement")
     elif not irr_ok:
         reasons.insert(0, f"irradiance improvement {improvement:.1%} below {GATE_MIN_IMPROVEMENT:.0%}"
                        if improvement is not None else "no irradiance comparison possible")
@@ -1697,4 +1785,28 @@ def export_settings(data: LearningData, groups: Iterable[GroupInfo], tz: tzinfo,
         "gate": data.d["gate"],
         "state": data.d["state"],
         "representativeness": data.d["representativeness"],
+        "same_day": _same_day_settings(data),
+    }
+
+
+def _same_day_settings(data: LearningData) -> dict[str, Any]:
+    from . import same_day as SD  # pure; late import avoids a cycle
+
+    section = data.d["same_day"]
+    return {
+        "table": section.get("table"),
+        "gate": section.get("gate"),
+        "parameters": {
+            "lead_buckets_h": SD.LEAD_BUCKETS_H,
+            "prior_beta": SD.PRIOR_BETA,
+            "prior_days": SD.PRIOR_DAYS,
+            "beta_min": SD.BETA_MIN,
+            "beta_max": SD.BETA_MAX,
+            "beta_window_days": SD.BETA_WINDOW_DAYS,
+            "band_min_clear_kwh": SD.BAND_MIN_CLEAR_KWH,
+            "usable_band_share": SD.USABLE_BAND_SHARE,
+            "band_s": SD.BAND_S,
+            "k_max": SD.K_MAX,
+            "cautious_z": SD.CAUTIOUS_Z,
+        },
     }
