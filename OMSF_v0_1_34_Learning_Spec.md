@@ -195,7 +195,7 @@ A day or hour is excluded from learning, with a logged reason, when:
 |---|---|
 | Station data missing | < 5 of 6 values in the hour |
 | Station not representative of the house | day ratio PV ÷ model-from-station outside 0.6–1.4 (local fog boundary, outage) |
-| Station correlation degraded | rolling 14-day hourly correlation PV vs station < 0.85 → learning **paused**, state `paused: station` |
+| Station correlation degraded | rolling 14-day hourly correlation PV vs station < 0.85 → learning **paused**, state `paused: station` (0.1.35.1: production vs the members' model on station light, 3-hour sums — row 22) |
 | Snow | reflected ÷ global (`osr000z0`/`gre000z0`) > 0.4 with global > 100 W/m² → day excluded (snow on modules unknown) |
 | Production counter fault | negative step, step > 1.2 × group kWp × 1 h, or missing statistic |
 | Curtailment | hours flagged by an optional "export limited" binary sensor (owner to say whether this ever happens) |
@@ -431,4 +431,5 @@ The learner's value is on the days it learns are systematically misjudged.
 | 19 | — | 0.1.34.2: hours the shading geometry darkens by > 10 % left out of stage 2 (unshaded model stored per group-hour) | owner 14 Oct: approximate geometry accepted; winter unverified |
 | 20 | — | 0.1.34.2: store schema 2, migration from 1 (measurements kept) | rows gained total cloud |
 | 21 | gate on the 06:00 forecast (row 2) | 0.1.35: gate on the *decision forecast*, the first run at/after sunrise + 1 h; store schema 3 drops the 06:00 records | owner 19 Oct: the battery automation decides at sunrise + 1 h; see `OMSF_v0_1_35_Same_Day_Spec.md` |
+| 22 | station check: hourly correlation of production with station GHI | 0.1.35.1: correlation of production with the members' model on station light, in 3-hour sums (blocks with ≥ 2 hours, ≥ 20 blocks), 14 days, limit 0.85 | owner data 13–20 Oct: hourly r 0.835 (with the model 0.832, so not orientation), 3-hour 0.913, daily 0.934; lag 0 best. Passing clouds 8 km apart differ by the hour, not by the half day |
 | 14 | — | Home Assistant platform: `ConfigEntry.runtime_data` owns coordinator / hub; `PARALLEL_UPDATES` (sensors 0, switches 1); owner actions serialised with the runs; every computation in the executor on a consistent copy of the data; recorder only through its own executor | explicit lifecycle ownership, deliberate concurrency (owner request, 13 Oct 2026) |

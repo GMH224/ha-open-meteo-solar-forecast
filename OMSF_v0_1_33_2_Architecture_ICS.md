@@ -11,6 +11,17 @@ also a hybrid of both.
 
 ---
 
+## 0f. Update for 0.1.35.1 — station check and same-day signal
+
+Release audit: [`omsf_v0.1.35.1_release_audit.md`](omsf_v0.1.35.1_release_audit.md). Three fixes from the owner's
+first 14 days of data, no new behaviour:
+
+| ID | Change | Safety effect |
+|---|---|---|
+| R49 | station check (F23) on production vs the members' model on station light, 3-hour sums, limit unchanged | learning no longer paused by passing clouds; a station that is systematically unlike the house still pauses it |
+| R50 | same-day signal from one band (0.3 kWh clear-sky minimum kept) | a signal exists at sunrise + 1 h, the battery decision time |
+| R51 | newest band without counter reading → window one band earlier | no intermittent loss of the signal at :00/:30; an older missing band still refuses it |
+
 ## 0e. Update for 0.1.35 — same-day correction
 
 Design record: [`OMSF_v0_1_35_Same_Day_Spec.md`](OMSF_v0_1_35_Same_Day_Spec.md); companion documents
@@ -125,7 +136,7 @@ export in the executor; recorder access only via the recorder's executor.
 | F20 | Station sensor missing/stale/without global radiation | no new evidence; hours incomplete → days excluded; state sensor attribute `station` |
 | F21 | Weather forecast without cloud layers (Fusion < 0.3.4) | hourly step fails visibly (event, `last_run`); no archive, no corrections |
 | F22 | Recorder unavailable / energy counter without statistics | nightly step `production` fails visibly; days wait, then `production_missing` |
-| F23 | Station not representative (14-day correlation < 0.85) | state `paused`, forecast raw |
+| F23 | Station not representative (14-day correlation < 0.85; 0.1.35.1: production vs model, 3-hour sums) | state `paused`, forecast raw |
 | F24 | Member entry removed or switched to Open-Meteo / sources differ | state `paused` (configuration), forecast raw |
 | F25 | Learning store unreadable or malformed | copy kept as `.corrupt-<time>`, neutral start, event |
 | F26 | Store above 16 MB (8 MB before 0.1.34.2) | oldest 30-day blocks dropped, event |

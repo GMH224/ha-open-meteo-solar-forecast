@@ -17,5 +17,5 @@
   "requirements": [
     "open_meteo_solar_forecast==0.1.32"
   ],
-  "version": "0.1.35.0"
+  "version": "0.1.35.1"
 }

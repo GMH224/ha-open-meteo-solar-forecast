@@ -55,7 +55,8 @@ K_MAX = 1.05  # (3.1) cloud enhancement over an hour stays small
 K_GRID = np.array([0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, K_MAX])
 """Response-curve grid; denser at low k, where grey days live."""
 WINDOW_BANDS = 4  # (3.1) the last hour
-MIN_WINDOW_BANDS = 2
+MIN_WINDOW_BANDS = 1  # 0.1.35.1: at sunrise + 1 h often only one band exists (owner data 20 Oct)
+PENDING_BAND_S = 900  # 0.1.35.1: the newest band may still wait for its counter readings
 SIGNAL_AFTER_SUNRISE_S = 1800  # East (5K) waits 30 min after sunrise (owner data)
 MIN_WINDOW_CLEAR_KWH = 0.3  # (3.1) counter resolution 0.01 kWh -> |Δk| <= 0.033 per counter
 BAND_MIN_CLEAR_KWH = 0.05  # bands below this carry no usable k
@@ -327,10 +328,18 @@ def measure_signal(
     them differ slightly).
     """
     bands = window_bands(now, sunrise)
+    if bands:
+        # 0.1.35.1: a band that ended moments ago may not be reported by the
+        # counters yet (owner data 20 Oct: no signal at several decision
+        # times). Then the window moves back one band instead of failing.
+        newest = bands[-1]
+        pending = any((measured.get(newest) or {}).get(g) is None for g in groups)
+        if pending and now.timestamp() - (newest + BAND_S) < PENDING_BAND_S:
+            bands = window_bands(now - timedelta(seconds=BAND_S), sunrise)
     joint = joint_kfc(curves, kfc_groups, groups)
     sit = situation(joint, now)
     if len(bands) < MIN_WINDOW_BANDS:
-        return Signal(False, "too early (sunrise + 30 min, then two bands)", situation=sit)
+        return Signal(False, "too early (sunrise + 30 min, then one confirmed band)", situation=sit)
     total_measured = 0.0
     for band in bands:
         for group in groups:

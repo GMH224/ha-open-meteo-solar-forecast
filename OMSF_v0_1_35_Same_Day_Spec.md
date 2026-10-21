@@ -61,7 +61,8 @@ geometry. Instead:
   before each band edge), valid only if the counter was reported at or after the band end, the step is not negative
   and not above 1.2 × kWp × duration (+ one resolution step). A band whose counter has not reported 30 min after its
   end is stored as unknown.
-- **Window.** The last four completed bands, none before sunrise + 30 min, at least two.
+- **Window.** The last four completed bands, none before sunrise + 30 min, at least two (0.1.35.1: at least one; if
+  the newest band has no counter reading yet, the window ends one band earlier — §8 rows 10, 11).
 - **Inversion.** k_meas = the k at which Σ_g,b E_g,b(k) equals the measured energy of the window (linear
   interpolation on the monotone curve; at or above the curve's top: k = 1.05, flagged *saturated*).
 - **Forecast index of the window.** k_fc,win = Σ w_g,b·k_fc,g(h(b)) / Σ w_g,b with w = E_g,b(1) (the clear-sky
@@ -188,3 +189,5 @@ learning-corrected in state `applied`).
 | 7 | replay recomputes every SDC decision | replay recomputes the β/σ table | ê depends on the PV model (response curves), which the independent tool deliberately does not contain |
 | 8 | — | same-day records kept 120 days | the table uses the last 60 usable days, the check 28 days; the store stays small |
 | 9 | — | the 5 % rule is evaluated with a 1e-9 tolerance | exactly 5 % must pass despite float rounding |
+| 10 | window of at least two bands | 0.1.35.1: at least one band | owner data 20 Oct: at sunrise + 1 h only one band lies after sunrise + 30 min, so the decision the battery uses had no signal; the 0.3 kWh clear-sky minimum keeps the counter resolution error at ±0.033 per counter |
+| 11 | a band without counter reading → no signal | 0.1.35.1: if the *newest* band has no reading yet (it ended < 15 min ago), the window ends one band earlier | the run comes 40 s after a band ends, before the counter's next report; an older missing band still refuses the signal |

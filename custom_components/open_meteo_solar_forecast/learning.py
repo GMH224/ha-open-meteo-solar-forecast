@@ -164,6 +164,13 @@ MODEL_WAIT_DAYS = 3
 REPRESENTATIVE_MIN_R = 0.85
 REPRESENTATIVE_WINDOW_DAYS = 14
 REPRESENTATIVE_MIN_HOURS = 60
+REPRESENTATIVE_BLOCK_H = 3
+"""0.1.35.1: production is compared with the members' model on the station's
+measured light, in 3-hour sums. Hourly, two places 8 km apart see different
+passing clouds (owner data 13-20 Oct: r = 0.83 hourly, 0.91 in 3-hour sums,
+0.93 daily, time alignment confirmed); the check is meant to catch a station
+that is systematically unlike the house."""
+REPRESENTATIVE_MIN_BLOCKS = REPRESENTATIVE_MIN_HOURS // REPRESENTATIVE_BLOCK_H
 SNOW_ALBEDO = 0.4
 SNOW_MIN_GHI = 100.0
 COUNTER_STEP_FACTOR = 1.2
@@ -1419,28 +1426,41 @@ def representativeness(
     latitude: float,
     longitude: float,
 ) -> dict[str, Any]:
-    """Hourly correlation of total production with station GHI (14 days)."""
+    """Correlation of total production with the members' model on the
+    station's measured light, in 3-hour sums, over 14 days (0.1.35.1; before:
+    hourly production against station GHI). Blocks need at least two hours
+    with the sun at 10° or more and every group's production and model."""
     now_ts = int(now.timestamp())
     names = [g.name for g in groups]
-    xs, ys = [], []
+    block_s = REPRESENTATIVE_BLOCK_H * HOUR_S
+    blocks: dict[int, list[float]] = {}  # block -> [production, model, hours]
+    hours = 0
     for key, meas in data.d["station_hours"].items():
         if key < now_ts - REPRESENTATIVE_WINDOW_DAYS * DAY_S or key >= now_ts or meas[H["ghi"]] is None:
             continue
         if hour_geometry(key, latitude, longitude)[1] < STAGE2_MIN_ELEVATION_DEG:
             continue
-        values = [data.d["production"].get(name, {}).get(key) for name in names]
-        if not names or any(v is None for v in values):
+        produced = [data.d["production"].get(name, {}).get(key) for name in names]
+        modelled = [data.d["model"].get(name, {}).get(key) for name in names]
+        if not names or any(v is None for v in produced) or any(v is None for v in modelled):
             continue
-        xs.append(meas[H["ghi"]])
-        ys.append(sum(values))
-    n = len(xs)
-    if n < REPRESENTATIVE_MIN_HOURS:
-        return {"r": None, "hours": n, "representative": True}
-    x, y = np.array(xs), np.array(ys)
+        item = blocks.setdefault(key // block_s, [0.0, 0.0, 0])
+        item[0] += sum(v for v in produced if v is not None)
+        item[1] += sum(v for v in modelled if v is not None)
+        item[2] += 1
+        hours += 1
+    used = [item for item in blocks.values() if item[2] >= 2]
+    result: dict[str, Any] = {"r": None, "hours": hours, "blocks": len(used), "representative": True,
+                              "basis": f"{REPRESENTATIVE_BLOCK_H}-hour sums, production vs model on station light"}
+    if len(used) < REPRESENTATIVE_MIN_BLOCKS:
+        return result
+    x = np.array([item[1] for item in used])
+    y = np.array([item[0] for item in used])
     if float(x.std()) == 0.0 or float(y.std()) == 0.0:
-        return {"r": None, "hours": n, "representative": True}
+        return result
     r = float(np.corrcoef(x, y)[0, 1])
-    return {"r": round(r, 4), "hours": n, "representative": r >= REPRESENTATIVE_MIN_R}
+    result.update(r=round(r, 4), representative=r >= REPRESENTATIVE_MIN_R)
+    return result
 
 
 # --------------------------------------------------------------------------

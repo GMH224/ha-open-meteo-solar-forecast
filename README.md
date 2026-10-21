@@ -317,7 +317,7 @@ measures (e.g. West and South). Your PV entries are not changed.
 | `sensor.solar_forecast_learning_<group>_correction_today` / `_tomorrow` | kWh corrected minus raw for that inverter |
 | `sensor.solar_forecast_learning_<group>_energy_error` | mean daily energy error of the corrected decision forecast |
 | `sensor.solar_forecast_learning_<group>_calibration` | stage-2 factors; attribute `suggested_efficiency_change_percent` |
-| `sensor.solar_forecast_learning_station_correlation` | is the station representative of your roof? (learning pauses below 0.85) |
+| `sensor.solar_forecast_learning_station_correlation` | is the station representative of your roof? Production against your model on the station's light, in 3-hour sums over 14 days (learning pauses below 0.85) |
 | `sensor.solar_forecast_learning_station_albedo` | reflected / global light at the station; above 0.4: snow on the ground (days excluded) |
 | `sensor.solar_forecast_learning_evidence`, `_last_run` | how much evidence exists; the last nightly run with each step's outcome |
 | `switch.solar_forecast_learning_same_day_switch` | your authority over the same-day correction (below) |
@@ -353,7 +353,8 @@ correction uses that:
   (your inverters' energy counters) with what your own PV model gives for
   that hour under a clear sky and under the forecast sky. The result is one
   number, how much darker or brighter the sky is than forecast (from
-  sunrise + 30 min, when a waking inverter has started).
+  sunrise + 30 min, when a waking inverter has started; one quarter hour is
+  enough, and a quarter hour the counters have not reported yet is skipped).
 - Today's remaining hours are pulled towards that measurement, most for the
   next hours. How strongly and for how long is **learned from your own
   days** (separately for "the forecast expects it to clear" and other days),

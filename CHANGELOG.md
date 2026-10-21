@@ -1,5 +1,26 @@
 # Changelog — GMH224 fork
 
+## 0.1.35.1 — 2026-10-21 — station check and same-day signal fixes
+
+Found in the owner's export of 21 Oct (14 days of data). Release audit:
+`omsf_v0.1.35.1_release_audit.md`.
+
+### Fixed
+- **Station check paused learning without reason.** It correlated hourly
+  production with the station's light; passing clouds 8 km apart differ hour
+  by hour (owner data: r 0.83 hourly, 0.91 in 3-hour sums, 0.93 daily; time
+  alignment confirmed). It now correlates production with the members' model
+  on the station's light in **3-hour sums** over 14 days; the limit stays
+  0.85. The sensor *Station correlation* shows `blocks` and `basis`. The
+  value is re-evaluated in the next nightly run.
+- **Same-day correction had no signal at sunrise + 1 h.** Only one band lies
+  between the inverters' 30-minute wait and that time; one band is now enough
+  (the 0.3 kWh clear-sky minimum still applies).
+- **Same-day signal intermittently invalid at :00 and :30.** The run comes
+  40 s after a band ends, often before the counter has reported. A newest
+  band without readings now moves the window back one band (the four latest
+  confirmed bands) instead of failing.
+
 ## 0.1.35.0 — 2026-10-19 — same-day correction
 
 Design record: `OMSF_v0_1_35_Same_Day_Spec.md` (confirmed by the owner on

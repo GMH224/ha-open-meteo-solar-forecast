@@ -1,6 +1,6 @@
 # Developer notes — GMH224 fork of ha-open-meteo-solar-forecast
 
-Applies from v0.1.33.2 (updated for 0.1.34 / 0.1.34.1). Architecture and rationale:
+Applies from v0.1.33.2 (updated for 0.1.34 to 0.1.35.1). Architecture and rationale:
 [`OMSF_v0_1_33_2_Architecture_ICS.md`](OMSF_v0_1_33_2_Architecture_ICS.md).
 
 ## Module map
@@ -95,6 +95,14 @@ suite before changing the pin.**
     to (M233, M240). Untrusted counter readings: unit, sign, step and
     freshness checked (M225–M227, M257, M258).
 
+15. Signal window and station check (0.1.35.1): only the *newest* band may
+    be skipped as pending; any older band without a reading refuses the
+    signal (M269, M270). One band is enough, but never below the 0.3 kWh
+    clear-sky minimum (M222, M268). The station check compares production
+    with the model, not with station GHI, in 3-hour sums, and never counts a
+    missing model hour as zero (M264–M267). Do not shorten the blocks: hour
+    by hour, two places 8 km apart see different clouds.
+
 ## Running the tests
 
 ```bash
@@ -103,7 +111,7 @@ python3.13 -m venv .venv
 .venv/bin/python -m pytest -q            # full suite (~15 s)
 .venv/bin/python -m pyflakes custom_components tests tools
 .venv/bin/python -m mypy custom_components/open_meteo_solar_forecast   # 38 known findings in pre-0.1.34 modules, none new
-.venv/bin/python tests/mutation/run_mutations.py --out mutation_results.json   # 190 mutations, hours on 2 CPUs; --from/--to/--only
+.venv/bin/python tests/mutation/run_mutations.py --out mutation_results.json   # 270 mutations, hours on 2 CPUs; --from/--to/--only
 ```
 
 `pytest-homeassistant-custom-component` brings a real Home Assistant and
