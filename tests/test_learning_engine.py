@@ -572,20 +572,43 @@ def test_day_without_station_model_waits_then_is_unchecked():
 
 
 def test_representativeness():
+    """0.1.35.1: production against the members' model on station light, in
+    3-hour sums; passing clouds that only move energy within a block do not
+    count, and the station's GHI alone is not the reference."""
     data = L.LearningData()
     rng = random.Random(3)
     for d in range(1, 8):
         day = (datetime(2026, 10, 1) + timedelta(days=d)).date().isoformat()
         _full_day(data, day, kt=rng.uniform(0.1, 0.7))
         for k in _day_hours_with_sun(day, 10):
-            data.d["production"]["10K"][k] = data.d["station_hours"][k][0] / 100.0
+            data.d["model"].setdefault("10K", {})[k] = rng.uniform(0.2, 4.0)  # unrelated to station GHI
+    model = data.d["model"]["10K"]
+    production = data.d["production"]["10K"]
+    blocks: dict = {}
+    for k in model:
+        if L.hour_geometry(k, LAT, LON)[1] >= L.STAGE2_MIN_ELEVATION_DEG and k in data.d["station_hours"]:
+            blocks.setdefault(k // (3 * 3600), []).append(k)
+    for keys in blocks.values():  # same energy per block, shuffled hour by hour
+        values = [model[k] for k in keys]
+        for k, v in zip(keys, values[1:] + values[:1]):
+            production[k] = v
     now = datetime(2026, 10, 9, 2, tzinfo=UTC)
     rep = L.representativeness(data, [GROUP], now, LAT, LON)
     assert rep["r"] == pytest.approx(1.0) and rep["representative"]
-    for k in data.d["production"]["10K"]:
-        data.d["production"]["10K"][k] = rng.uniform(0, 5)
+    assert rep["blocks"] >= L.REPRESENTATIVE_MIN_BLOCKS and "3-hour" in rep["basis"]
+    hourly = np.corrcoef([model[k] for k in model], [production[k] for k in model])[0, 1]
+    assert hourly < L.REPRESENTATIVE_MIN_R  # the hourly check would have paused learning
+    for k in production:
+        production[k] = rng.uniform(0, 5)
     assert not L.representativeness(data, [GROUP], now, LAT, LON)["representative"]
-    assert L.representativeness(L.LearningData(), [GROUP], now, LAT, LON) == {"r": None, "hours": 0, "representative": True}
+    empty = L.representativeness(L.LearningData(), [GROUP], now, LAT, LON)
+    assert empty["r"] is None and empty["hours"] == 0 and empty["representative"]
+    # hours without a model value are left out; a block needs two hours
+    few = L.LearningData()
+    few.d["station_hours"] = dict(data.d["station_hours"])
+    few.d["production"]["10K"] = dict(production)
+    few.d["model"]["10K"] = {k: v for i, (k, v) in enumerate(sorted(model.items())) if i % 3 == 0}
+    assert L.representativeness(few, [GROUP], now, LAT, LON)["blocks"] == 0
 
 
 # ---------------------------------------------------------------------------

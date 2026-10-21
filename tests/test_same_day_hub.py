@@ -215,3 +215,15 @@ async def test_cautious_attribute_is_never_above_the_served_bands(hass, zurich, 
     await hass.async_block_till_done()
     attrs = hass.states.get("sensor.south_energy_production_today").attributes
     assert attrs["watts_cautious"] and all(attrs["watts_cautious"][k] == attrs["watts"][k] for k in attrs["watts_cautious"])
+
+
+async def test_signal_uses_confirmed_bands_while_the_newest_is_pending(hass, zurich, freezer):
+    """0.1.35.1: 40 s after a band ends its counter has usually not reported;
+    the run then measures the four bands before it instead of failing."""
+    _, _, _, hub = await grey_morning(hass, freezer)
+    now = datetime(2026, 10, 7, 9, 15, 40, tzinfo=UTC)  # no counter reading since 09:02
+    freezer.move_to(now)
+    await hub.async_run_same_day(now)
+    assert hub.signal.valid, hub.signal.reason
+    assert hub.signal.bands == tuple(int(datetime(2026, 10, 7, 8, m, tzinfo=UTC).timestamp()) for m in (0, 15, 30, 45))
+    assert hub.signal.e < -0.5

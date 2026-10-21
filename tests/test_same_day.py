@@ -192,6 +192,47 @@ def test_signal_refused_with_too_little_light_or_a_missing_counter():
     assert "too early" in SD.measure_signal(enough, measured, kfc, ["g"], early, SUNRISE).reason
 
 
+def test_one_band_is_enough_at_sunrise_plus_one_hour():
+    """0.1.35.1: at sunrise + 1 h only one band lies after the inverters'
+    30-minute wait; it is used when its clear-sky energy reaches 0.3 kWh."""
+    now = SUNRISE + timedelta(minutes=60)
+    bands = SD.window_bands(now, SUNRISE)
+    assert len(bands) == 1 and bands[0] >= SUNRISE.timestamp() + 1800
+    kfc = {"g": {b // 3600 * 3600: 0.5 for b in bands}}
+    measured = {b: {"g": 0.1} for b in bands}
+    signal = SD.measure_signal(_curves_for(bands, {"g": 0.31}), measured, kfc, ["g"], now, SUNRISE)
+    assert signal.valid and signal.bands == tuple(bands), signal.reason
+    dim = SD.measure_signal(_curves_for(bands, {"g": 0.29}), measured, kfc, ["g"], now, SUNRISE)
+    assert not dim.valid and "too little light" in dim.reason
+
+
+def test_a_pending_newest_band_moves_the_window_back():
+    """0.1.35.1: the newest band without counter readings yet (it ended
+    moments ago) is skipped; the window ends one band earlier."""
+    now = datetime(2026, 10, 7, 9, 0, 40, tzinfo=UTC)
+    bands = SD.window_bands(now, SUNRISE)
+    earlier = SD.window_bands(now - timedelta(minutes=15), SUNRISE)
+    assert earlier[-1] == bands[-2] and len(earlier) == SD.WINDOW_BANDS
+    curves = _curves_for(sorted(set(bands) | set(earlier)), {"g": 0.3})
+    kfc = {"g": {b // 3600 * 3600: 0.5 for b in set(bands) | set(earlier)}}
+    measured = {b: {"g": 0.06} for b in earlier}
+    signal = SD.measure_signal(curves, measured, kfc, ["g"], now, SUNRISE)
+    assert signal.valid and signal.bands == tuple(earlier), signal.reason
+    assert signal.k_meas == pytest.approx(0.2)
+    # one group of two pending is enough to move back
+    two = _curves_for(sorted(set(bands) | set(earlier)), {"g": 0.3, "h": 0.1})
+    kfc2 = {g: kfc["g"] for g in ("g", "h")}
+    measured2 = {b: {"g": 0.06, "h": 0.02} for b in earlier}
+    measured2[bands[-1]] = {"g": 0.06, "h": None}
+    assert SD.measure_signal(two, measured2, kfc2, ["g", "h"], now, SUNRISE).bands == tuple(earlier)
+    # a missing older band is not pending: still refused
+    measured[earlier[0]] = {"g": None}
+    assert "no counter reading" in SD.measure_signal(curves, measured, kfc, ["g"], now, SUNRISE).reason
+    # a complete newest band is used as before
+    full = {b: {"g": 0.06} for b in set(bands) | set(earlier)}
+    assert SD.measure_signal(curves, full, kfc, ["g"], now, SUNRISE).bands == tuple(bands)
+
+
 def test_situation():
     now = datetime(2026, 10, 7, 8, 30, tzinfo=UTC)
     h = L.hour_key(now)

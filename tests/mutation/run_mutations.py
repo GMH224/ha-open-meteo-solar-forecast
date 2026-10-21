@@ -778,6 +778,26 @@ MUTATIONS = [
     ("M263", 'cautious bands not capped by the served bands', SENS,
      '                    moment.isoformat(): min(value, served.get(moment, value))',
      '                    moment.isoformat(): value'),
+    # 0.1.35.1
+    ("M264", 'representativeness against station GHI instead of the model', LRN,
+     '        item[1] += sum(v for v in modelled if v is not None)',
+     '        item[1] += meas[H["ghi"]]'),
+    ("M265", 'representativeness hourly instead of 3-hour sums', LRN,
+     'REPRESENTATIVE_BLOCK_H = 3', 'REPRESENTATIVE_BLOCK_H = 1'),
+    ("M266", 'representativeness blocks with a single hour used', LRN,
+     '    used = [item for item in blocks.values() if item[2] >= 2]',
+     '    used = [item for item in blocks.values() if item[2] >= 1]'),
+    ("M267", 'representativeness takes missing model hours as zero', LRN,
+     '        if not names or any(v is None for v in produced) or any(v is None for v in modelled):',
+     '        if not names or any(v is None for v in produced):'),
+    ("M268", 'signal needs two bands again', SDM,
+     'MIN_WINDOW_BANDS = 1', 'MIN_WINDOW_BANDS = 2'),
+    ("M269", 'pending newest band not skipped', SDM,
+     '        if pending and now.timestamp() - (newest + BAND_S) < PENDING_BAND_S:',
+     '        if False and pending:'),
+    ("M270", 'newest band skipped only when every group is pending', SDM,
+     '        pending = any((measured.get(newest) or {}).get(g) is None for g in groups)',
+     '        pending = all((measured.get(newest) or {}).get(g) is None for g in groups)'),
 ]
 
 
