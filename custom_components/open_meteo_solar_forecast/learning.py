@@ -583,6 +583,7 @@ def _new_data() -> dict[str, Any]:
         "production_backfilled": [],
         "purged_before": None,  # newest retention limit applied (epoch s)
         "same_day": {"days": {}, "table": None, "gate": None, "gate_history": []},  # 0.1.35
+        "house_ghi": {"windows": {}, "version_history": []},  # 0.1.36: measured light at the house
     }
 
 
@@ -696,6 +697,12 @@ class LearningData:
         try:
             data["same_day"] = validate_section(data["same_day"])
         except SameDayDataError as err:
+            raise LearningDataError(str(err)) from err
+        from .house_ghi import HouseGhiDataError, validate_section as validate_house  # pure; late import
+
+        try:
+            data["house_ghi"] = validate_house(data["house_ghi"])
+        except HouseGhiDataError as err:
             raise LearningDataError(str(err)) from err
         _require(isinstance(data["freeze"], list), "freeze")
         for interval in data["freeze"]:
@@ -823,6 +830,9 @@ class LearningData:
             },
             "gate_history": list(section["gate_history"]),
         }
+        house = self.d["house_ghi"]
+        d["house_ghi"] = {"windows": dict(house["windows"]),
+                          "version_history": [list(item) for item in house["version_history"]]}
         return LearningData(d)
 
     # -- events ------------------------------------------------------------
@@ -987,6 +997,9 @@ class LearningData:
         for name in ("stage2_history", "gate_history"):
             if len(self.d[name]) > HISTORY_MAX:
                 del self.d[name][: len(self.d[name]) - HISTORY_MAX]
+        for key in [k for k in self.d["house_ghi"]["windows"] if int(k) < limit]:  # 0.1.36, same retention
+            del self.d["house_ghi"]["windows"][key]
+            removed += 1
         return removed
 
     def trim_oldest_days(self, days: int, tz: tzinfo) -> None:
@@ -1806,6 +1819,28 @@ def export_settings(data: LearningData, groups: Iterable[GroupInfo], tz: tzinfo,
         "state": data.d["state"],
         "representativeness": data.d["representativeness"],
         "same_day": _same_day_settings(data),
+        "house_ghi": _house_ghi_settings(data),
+    }
+
+
+def _house_ghi_settings(data: LearningData) -> dict[str, Any]:
+    from . import house_ghi as HG  # pure; late import avoids a cycle
+
+    return {
+        "version": HG.VERSION,
+        "version_history": data.d["house_ghi"]["version_history"],
+        "parameters": {
+            "window_s": HG.WINDOW_S,
+            "low_sun_bad_deg": HG.LOW_SUN_BAD_DEG,
+            "low_sun_uncertain_deg": HG.LOW_SUN_UNCERTAIN_DEG,
+            "clip_bad": HG.CLIP_BAD,
+            "clip_uncertain": HG.CLIP_UNCERTAIN,
+            "mixed_kd": [HG.MIXED_KD_LOW, HG.MIXED_KD_HIGH],
+            "resolution_clear_kwh": HG.RESOLUTION_CLEAR_KWH,
+            "snow": {"min_elevation_deg": HG.SNOW_MIN_ELEVATION_DEG, "station_k": HG.SNOW_STATION_K,
+                     "ratio": HG.SNOW_RATIO, "max_temp_c": HG.SNOW_MAX_TEMP_C},
+            "retention_days": HG.RETENTION_DAYS,
+        },
     }
 
 

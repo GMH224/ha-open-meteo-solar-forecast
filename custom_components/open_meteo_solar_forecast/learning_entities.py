@@ -18,12 +18,13 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOfIrradiance
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
+from . import house_ghi as HG
 from . import learning as L
 from . import same_day as SD
 from .const import ATTR_LEARNING_HOURS, DOMAIN
@@ -374,13 +375,45 @@ class HubSensor(HubEntity, SensorEntity):
         return self.entity_description.attributes(self.hub, self.group)
 
 
-def hub_sensors(hub: LearningHub) -> list[HubSensor]:
-    entities: list[HubSensor] = []
+class HouseGhiSensor(HubEntity, SensorEntity):
+    """Measured light at the house (0.1.36): GHI of the last complete
+    15-minute window, from the inverters' energy. ``unavailable`` when the
+    window's quality is bad; interface: docs/house_ghi_interface.md."""
+
+    _attr_device_class = SensorDeviceClass.IRRADIANCE
+    _attr_native_unit_of_measurement = UnitOfIrradiance.WATTS_PER_SQUARE_METER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, hub: LearningHub) -> None:
+        super().__init__(hub, "house_ghi")
+
+    def _latest(self) -> HG.Window | None:
+        return HG.latest(self.hub.house_windows(dt_util.utcnow(), hours=2))
+
+    @property
+    def available(self) -> bool:
+        return HG.published(self._latest(), dt_util.utcnow())
+
+    @property
+    def native_value(self) -> float | None:
+        window = self._latest()
+        return window.ghi if HG.published(window, dt_util.utcnow()) and window is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        now = dt_util.utcnow()
+        return HG.attributes(self.hub.house_windows(now), now, self.hub.tz)
+
+
+def hub_sensors(hub: LearningHub) -> list[SensorEntity]:
+    entities: list[SensorEntity] = []
     for description in SENSORS:
         if description.per_group:
             entities += [HubSensor(hub, description, group.name) for group in hub.groups]
         else:
             entities.append(HubSensor(hub, description))
+    entities.append(HouseGhiSensor(hub))
     return entities
 
 

@@ -48,6 +48,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 import numpy as np
 
+from . import house_ghi as HG
 from . import learning as L
 from . import same_day as SD
 from .const import (
@@ -55,6 +56,7 @@ from .const import (
     CONF_GROUP_MEMBERS,
     CONF_GROUP_NAME,
     CONF_GROUPS,
+    CONF_INVERTER_POWER,
     CONF_LOCAL_IRRADIANCE_ENTITY,
     CONF_LOCAL_WEATHER_ENTITY,
     CONF_MODULES_POWER,
@@ -92,6 +94,8 @@ CURVES_MAX_AGE = timedelta(minutes=60)
 MEMBER_REPORT_MAX_AGE = timedelta(minutes=25)
 DECISION_LATE_LIMIT = timedelta(minutes=15)
 COUNTER_KEEP = timedelta(hours=30)
+HOUSE_GHI_MINUTES = (2, 17, 32, 47)  # 0.1.36: an extra house-light run shortly after each window ends
+MEMBER_REFRESH_TIMEOUT_S = 60  # 0.1.36: a fresh same-day signal reaches the members before decisions
 ENERGY_TO_KWH = {"Wh": 0.001, "kWh": 1.0, "MWh": 1000.0}
 
 
@@ -274,7 +278,13 @@ class LearningHub:
         self.curves: SD.Curves | None = None
         self.curves_key: tuple[str, float] | None = None
         self.signal: SD.Signal | None = None
+        self.signal_time: datetime | None = None
         self.last_same_day: dict[str, Any] = {}
+        # 0.1.36 measured light at the house (curves in memory; windows in the store)
+        self.house_curves: SD.Curves | None = None
+        self.house_curves_key: tuple[str, float] | None = None
+        self.house_temperature_ok = False
+        self.last_house_ghi: dict[str, Any] = {}
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -302,6 +312,9 @@ class LearningHub:
             )
         self._unsubs.append(
             async_track_time_change(self.hass, self._same_day_cb, minute=SAME_DAY_MINUTES, second=SAME_DAY_SECOND)
+        )
+        self._unsubs.append(
+            async_track_time_change(self.hass, self._house_ghi_cb, minute=HOUSE_GHI_MINUTES, second=0)
         )
         self._unsubs.append(
             async_track_time_change(self.hass, self._nightly_cb, hour=NIGHTLY_HOUR, minute=NIGHTLY_MINUTE, second=0)
@@ -363,6 +376,11 @@ class LearningHub:
         )
 
     @callback
+    def _house_ghi_cb(self, _now: datetime) -> None:
+        self.entry.async_create_background_task(
+            self.hass, self.async_run_house_ghi(), "open_meteo_solar_forecast house light"
+        )
+
     def _nightly_cb(self, _now: datetime) -> None:
         self.entry.async_create_background_task(
             self.hass, self.async_run_nightly(), "open_meteo_solar_forecast learning nightly run"
@@ -590,13 +608,16 @@ class LearningHub:
             if scope == "all":
                 settings = dict(self.data.d["settings"])
                 events = list(self.data.d["events"])
+                house = self.data.d["house_ghi"]  # 0.1.36: a measurement, not learned: kept
                 self.data = L.LearningData()
+                self.data.d["house_ghi"] = house
                 self.data.d["created"] = now.isoformat()
                 self.data.d["events"] = events
                 settings["apply"] = False
                 settings["same_day"] = False
                 self.data.d["settings"] = settings
                 self.signal = None
+                self.signal_time = None
             else:
                 ts = int(now.timestamp())
                 self.data.d["resets"].append([ts, scope])
@@ -852,7 +873,7 @@ class LearningHub:
         }
 
     def _fresh_signal(self, now: datetime) -> SD.Signal | None:
-        computed = self.last_same_day.get("signal_time")
+        computed = self.signal_time
         if self.signal is None or computed is None or now - computed > timedelta(minutes=15):
             return None
         return self.signal
@@ -890,9 +911,23 @@ class LearningHub:
             result = await self._step(report, "same_day", self._async_same_day_step(now))
             if result is None:
                 self.signal = None  # a failed run never leaves an old signal in use
+                self.signal_time = None
             report["signal"] = self.signal.as_dict() if self.signal is not None else None
             self.last_same_day = {**report, "signal_time": now if self.signal is not None else None}
+            await self._run_house_ghi(now)
         self._notify()
+
+    async def async_run_house_ghi(self, now: datetime | None = None) -> None:
+        """The extra house-light run (0.1.36), shortly after a window ends."""
+        now = now or dt_util.utcnow()
+        async with self._lock:
+            await self._run_house_ghi(now)
+        self._notify()
+
+    async def _run_house_ghi(self, now: datetime) -> None:
+        report: dict[str, Any] = {"started": now.isoformat()}
+        await self._step(report, "house_ghi", self._async_house_step(now))
+        self.last_house_ghi = report
 
     async def _async_same_day_step(self, now: datetime) -> str:
         if self.config_problem or not self.groups:
@@ -915,10 +950,33 @@ class LearningHub:
         if self.curves is None:
             raise HubInputError("no model response curves")
         self.signal = SD.measure_signal(self.curves, measured, kfc, names, now, sunrise)
-        decided = self._record_decisions(record, day, sunrise, kfc, now)
+        self.signal_time = now
+        refreshed = ""
+        if self.signal.valid:
+            # 0.1.36: the members serve the new signal now, not at their next
+            # 10-minute refresh, and the decision below records what they serve.
+            refreshed = await self._async_refresh_members_now()
+        decided = self._record_decisions(record, day, sunrise, self._group_kfc(day), now)
         self._save()
-        return f"{stored} bands, signal {'valid' if self.signal.valid else 'invalid'}" + (
+        return f"{stored} bands, signal {'valid' if self.signal.valid else 'invalid'}" + refreshed + (
             ", decision recorded" if decided else "")
+
+    async def _async_refresh_members_now(self) -> str:
+        """Refresh every member and wait (bounded) for it to finish."""
+        jobs = []
+        for group in self.groups:
+            for member in group.members:
+                coordinator = array_coordinator(self.hass, member)
+                if coordinator is not None:
+                    jobs.append(coordinator.async_refresh())
+        if not jobs:
+            return ""
+        try:
+            async with asyncio.timeout(MEMBER_REFRESH_TIMEOUT_S):
+                await asyncio.gather(*jobs)
+        except TimeoutError:
+            return ", member refresh timed out"
+        return ", members refreshed"
 
     def _group_kfc(self, day: str) -> dict[str, dict[int, float]]:
         out: dict[str, dict[int, float]] = {}
@@ -980,6 +1038,159 @@ class LearningHub:
             record["bands"][key] = {"m": measured, "c": round(clear, 4), "k": k}
             stored += 1
         return stored
+
+    # -- measured light at the house (0.1.36) -----------------------------------------------
+
+    async def _async_house_step(self, now: datetime) -> str:
+        """Assess every complete 15-minute window of today not yet stored."""
+        if self.config_problem or not self.groups:
+            return "paused"
+        section = self.data.d["house_ghi"]
+        if HG.note_version(section, now):
+            self.data.event(now, "house_ghi_version", f"house light version {HG.VERSION}: {HG.VERSION_NOTE}")
+            self._save()
+        day = now.astimezone(self.tz).date().isoformat()
+        sunrise = L.sunrise_utc(day, self.tz, self.latitude, self.longitude)
+        if sunrise is None or now < sunrise:
+            return "night"
+        first = int(sunrise.timestamp()) // HG.WINDOW_S * HG.WINDOW_S
+        last_end = int(now.timestamp()) // HG.WINDOW_S * HG.WINDOW_S
+        pending = [
+            start for start in range(first, last_end, HG.WINDOW_S)
+            if str(start) not in section["windows"]
+            and HG.window_elevation(start, self.latitude, self.longitude) > 0
+        ]
+        if not pending:
+            return "nothing new"
+        if not await self._async_ensure_house_curves(day, now):
+            return "waiting for the members"
+        if self.house_curves is None:
+            raise HubInputError("no house-light model curves")
+        limits = self._ac_limits_kwh()
+        stored = waiting = 0
+        for start in pending:
+            end = start + HG.WINDOW_S
+            measured = {
+                g.name: SD.band_energy(self.counters.get(g.name, []), start, end,
+                                       self._counter_fresh_until(g.name), g.kwp)
+                for g in self.groups
+            }
+            if any(v is None for v in measured.values()) and now.timestamp() - end < HG.COUNTER_WAIT_S:
+                waiting += 1
+                continue
+            window = HG.assess(
+                start,
+                measured=measured,
+                curve=self.house_curves.total([start]),
+                limits_kwh=limits,
+                sunrise=sunrise,
+                clear_ghi=HG.window_clear_ghi(start, self.latitude, self.longitude),
+                elevation=HG.window_elevation(start, self.latitude, self.longitude),
+                kt_clear=HG.window_kt_clear(start, self.latitude, self.longitude),
+                snow=self._house_snow(start, section),
+                temperature_ok=self.house_temperature_ok,
+            )
+            HG.store_window(section, window)
+            stored += 1
+        if stored:
+            self._save()
+        return f"{stored} windows" + (f", {waiting} waiting for counters" if waiting else "")
+
+    def _ac_limits_kwh(self) -> dict[str, float | None]:
+        """Inverter AC limit of each group over one window (kWh). Members of
+        a group share one inverter, so the largest configured value counts."""
+        out: dict[str, float | None] = {}
+        for group in self.groups:
+            watts = 0.0
+            for member in group.members:
+                entry = self.hass.config_entries.async_get_entry(member)
+                value = _to_float(entry.options.get(CONF_INVERTER_POWER)) if entry is not None else None
+                if value is not None and math.isfinite(value) and value > 0:
+                    watts = max(watts, value)
+            out[group.name] = watts / 1000.0 * HG.WINDOW_S / L.HOUR_S if watts > 0 else None
+        return out
+
+    def _house_temperatures(self, day: str, now: datetime) -> tuple[dict[datetime, float], bool]:
+        """Measured air temperature for each hour of the day: the station's
+        hour mean where known, else its latest sample (at most 3 h old),
+        else a fixed default (then ``ok`` is False)."""
+        index = L.STATION_FIELDS.index("temp")
+        latest = None
+        for end in sorted(self.data.d["station_samples"], reverse=True):
+            value = self.data.d["station_samples"][end][index]
+            if value is not None:
+                if now.timestamp() - end <= HG.TEMPERATURE_MAX_AGE_S:
+                    latest = float(value)
+                break
+        fallback = latest if latest is not None else HG.DEFAULT_TEMPERATURE_C
+        out: dict[datetime, float] = {}
+        for key in L.local_day_hours(day, self.tz):
+            hour = self.data.d["station_hours"].get(key)
+            value = None if hour is None else hour[L.H["temp"]]
+            out[L.key_to_dt(key)] = float(value) if value is not None else fallback
+        return out, latest is not None
+
+    async def _async_ensure_house_curves(self, day: str, now: datetime) -> bool:
+        """Model response of every group for today on clear-sky-shaped light,
+        with measured temperature only (rebuilt hourly)."""
+        if (self.house_curves is not None and self.house_curves_key is not None
+                and self.house_curves_key[0] == day
+                and now.timestamp() - self.house_curves_key[1] < CURVES_MAX_AGE.total_seconds()):
+            return True
+        keys = [k for k in L.local_day_hours(day, self.tz) if SD.clear_kt(k, self.latitude, self.longitude) > 0]
+        temperatures, ok = self._house_temperatures(day, now)
+        offset = int((now.astimezone(self.tz).utcoffset() or timedelta(0)).total_seconds())
+        curves = SD.Curves()
+        for group in self.groups:
+            for member in group.members:
+                coordinator = array_coordinator(self.hass, member)
+                if coordinator is None:
+                    return False
+                for index, k in enumerate(SD.K_GRID):
+                    records = SD.curve_records(keys, float(k), self.latitude, self.longitude)
+                    bands = await coordinator.async_model_bands(records, temperatures, offset)
+                    for ts, wh in bands.items():
+                        if L.key_to_dt(ts).astimezone(self.tz).date().isoformat() == day:
+                            curves.add(group.name, index, ts, wh / 1000.0)
+        self.house_curves = curves
+        self.house_curves_key = (day, now.timestamp())
+        self.house_temperature_ok = ok
+        return True
+
+    def _house_snow(self, start: int, section: Mapping[str, Any]) -> bool:
+        """Snow on the panels, from the last two complete hours; when they
+        cannot tell, the previous window of the day decides."""
+        hour = start - start % L.HOUR_S
+        windows = section["windows"]
+        hours = []
+        for back in (2, 1):
+            key = hour - back * L.HOUR_S
+            ks = [windows[str(key + i * HG.WINDOW_S)][1] for i in range(4) if str(key + i * HG.WINDOW_S) in windows]
+            ks = [k for k in ks if k is not None]
+            station = self.data.d["station_hours"].get(key)
+            ghi = None if station is None else station[L.H["ghi"]]
+            temp = None if station is None else station[L.H["temp"]]
+            hours.append(HG.SnowHour(
+                house_k=sum(ks) / len(ks) if len(ks) == 4 else None,
+                station_k=HG.station_k(ghi, key, self.latitude, self.longitude),
+                temperature=temp,
+                elevation=L.hour_geometry(key, self.latitude, self.longitude)[1],
+            ))
+        verdict = HG.snow_verdict(hours)
+        if verdict is not None:
+            return verdict
+        day = HG.day_of(start, self.tz)
+        earlier = [int(k) for k in windows if int(k) < start and HG.day_of(int(k), self.tz) == day]
+        return bool(earlier) and windows[str(max(earlier))][4] == "snow"
+
+    def house_windows(self, now: datetime, hours: int = 36) -> dict[int, HG.Window]:
+        """Recent stored windows (for the sensor and diagnostics)."""
+        cutoff = now.timestamp() - hours * L.HOUR_S
+        return {
+            int(k): HG.Window.from_row(int(k), row)
+            for k, row in self.data.d["house_ghi"]["windows"].items()
+            if int(k) >= cutoff
+        }
 
     def _record_decisions(
         self, record: dict[str, Any], day: str, sunrise: datetime, kfc: Mapping[str, Mapping[int, float]],
@@ -1386,6 +1597,9 @@ def _build_and_write_export(
     d_rows, d_header, b_rows, b_header = SD.export_rows(data.d["same_day"], names)
     files["same_day_decisions.csv"] = L._csv(d_rows, d_header)
     files["same_day_bands.csv"] = L._csv(b_rows, b_header)
+    h_rows, h_header, hd_rows, hd_header = HG.export_rows(data.d["house_ghi"], tz)
+    files["house_ghi.csv"] = L._csv(h_rows, h_header)
+    files["house_ghi_days.csv"] = L._csv(hd_rows, hd_header)
     files["events.csv"] = L.export_events_csv(data)
     settings = L.export_settings(data, groups, tz, latitude, longitude)
     settings["exported"] = now.isoformat()

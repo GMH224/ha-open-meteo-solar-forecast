@@ -232,6 +232,9 @@
       "same_day_improvement": {
         "name": "Same-day improvement"
       },
+      "house_ghi": {
+        "name": "House light (measured)"
+      },
       "cautious_coverage": {
         "name": "Cautious coverage"
       }

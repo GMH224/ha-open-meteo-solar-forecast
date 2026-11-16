@@ -213,6 +213,9 @@
       "same_day_improvement": {
         "name": "Verbesserung Tageskorrektur"
       },
+      "house_ghi": {
+        "name": "Licht am Haus (gemessen)"
+      },
       "cautious_coverage": {
         "name": "Abdeckung vorsichtige Prognose"
       }

@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, CONF_LATITUDE, CONF_LONGITUDE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 
 TO_REDACT = {
@@ -76,6 +77,23 @@ def _same_day_today(hub: Any) -> dict[str, Any] | None:
     return {"day": day, "bands": len(record["bands"]), "decisions": record["decisions"]}
 
 
+def _house_ghi(hub: Any) -> dict[str, Any]:
+    """0.1.36: the sensor's attributes, today's windows and the version
+    history (all windows are in the export)."""
+    from . import house_ghi as HG
+
+    now = dt_util.utcnow()
+    windows = hub.house_windows(now)
+    today = now.astimezone(hub.tz).date().isoformat()
+    return {
+        "attributes": HG.attributes(windows, now, hub.tz),
+        "version_history": hub.data.d["house_ghi"]["version_history"],
+        "last_run": hub.last_house_ghi,
+        "temperature_measured": hub.house_temperature_ok,
+        "today": [[w.start, *w.row()] for s, w in sorted(windows.items()) if HG.day_of(s, hub.tz) == today],
+    }
+
+
 def _hub_diagnostics(hub: Any, entry: ConfigEntry) -> dict[str, Any]:
     """0.1.34: everything the learner decides with, except raw hour data
     (that is in the export folder). No paths, no coordinates."""
@@ -111,6 +129,7 @@ def _hub_diagnostics(hub: Any, entry: ConfigEntry) -> dict[str, Any]:
             "decision_forecasts": len(d["issue6"]),
             "counter_readings": {g: len(s) for g, s in hub.counters.items()},
             "same_day_days": len(d["same_day"]["days"]),
+            "house_ghi_windows": len(d["house_ghi"]["windows"]),
         },
         "evidence": hub.evidence_info,
         "gate": d["gate"],
@@ -133,6 +152,7 @@ def _hub_diagnostics(hub: Any, entry: ConfigEntry) -> dict[str, Any]:
             "gate_history": d["same_day"].get("gate_history"),
             "today": _same_day_today(hub),
         },
+        "house_ghi": _house_ghi(hub),
         "events": d["events"],
     }
 
