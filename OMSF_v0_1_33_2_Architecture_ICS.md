@@ -11,6 +11,31 @@ also a hybrid of both.
 
 ---
 
+## 0g. Update for 0.1.36 — measured light at the house
+
+Design record: [`OMSF_v0_1_36_House_GHI_Spec.md`](OMSF_v0_1_36_House_GHI_Spec.md); interface:
+[`docs/house_ghi_interface.md`](docs/house_ghi_interface.md); release audit:
+[`omsf_v0.1.36.0_release_audit.md`](omsf_v0.1.36.0_release_audit.md).
+
+The hub becomes a *data source* for another integration: it publishes the light at the house (GHI, 15 min) with
+an OPC-UA-style quality. New module `house_ghi.py` (pure); the hub assesses each window after its counters
+reported; new store section `house_ghi` (2 years).
+
+| ID | Requirement | Measure |
+|---|---|---|
+| R52 | the value never depends on a forecast or on learning | separate response curves on synthetic light with measured temperature; no stage-1/stage-2/same-day input; tested (M289) |
+| R53 | a doubtful value is never published as good | quality rules, first match; bad → `unavailable`; validation rejects a bad window with a value |
+| R54 | consumers can rely on the method | `VERSION` recorded with date; export per window with its version |
+| R55 | history independent of the recorder | own store, 760 days, nightly export; survives a full reset |
+| R56 | a new same-day signal is served before decisions | member refresh (≤ 60 s) in the 5-minute run |
+
+| ID | Failure | Effect |
+|---|---|---|
+| F33 | counter missing or late | window waits ≤ 30 min, then bad `counter`; sensor unavailable |
+| F34 | station temperature missing | 10 °C assumed, quality uncertain `temperature` |
+| F35 | member model fails | step fails, logged; no window stored for the run; retried next run |
+| F36 | member refresh hangs | bounded to 60 s; decisions recorded with the reports at hand |
+
 ## 0f. Update for 0.1.35.1 — station check and same-day signal
 
 Release audit: [`omsf_v0.1.35.1_release_audit.md`](omsf_v0.1.35.1_release_audit.md). Three fixes from the owner's

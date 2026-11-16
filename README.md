@@ -372,6 +372,33 @@ correction uses that:
 Requirements as above (energy counters that update during the day). Design
 record: `OMSF_v0_1_35_Same_Day_Spec.md`.
 
+From 0.1.36 a newly measured signal reaches the arrays' forecasts within the
+same 5-minute run (before, it could wait up to 10 minutes for their next
+refresh), so an automation at sunrise + 1 h reads a forecast that already
+contains it.
+
+### Measured light at the house (0.1.36)
+
+The hub turns the inverters' 15-minute energy back into the light that
+reached the house, as **global horizontal irradiance in W/m²** (a flat,
+unobstructed square metre, like a weather station):
+`sensor.solar_forecast_learning_house_ghi`.
+
+- Energy over each 15-minute window, worked back through your own PV model
+  (orientation, shading, inverter limit) to a clear-sky index, times the
+  clear-sky light of that window. The array geometry drops out.
+- **No forecast in the value:** the model runs on synthetic clear-sky light
+  with the station's measured air temperature; no learned correction is
+  applied. A weather integration can use it as a local ground truth.
+- Every window has a quality - *good*, *uncertain* (published with a reason)
+  or *bad* (sensor `unavailable`, with a reason): low sun, inverter start-up,
+  clipping, snow, missing counter readings, mixed sky, and more.
+- Every window is kept two years and exported every night
+  (`house_ghi.csv`, `house_ghi_days.csv`).
+
+Interface for consumers: [`docs/house_ghi_interface.md`](docs/house_ghi_interface.md).
+Design record: `OMSF_v0_1_36_House_GHI_Spec.md`.
+
 **What to expect:** two weeks of collecting; corrections for common autumn
 situations (fog/stratus, broken cloud) after 3-6 weeks; broad coverage after
 about 10 weeks. Clear days do not change - the physics already handles

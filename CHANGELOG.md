@@ -1,5 +1,30 @@
 # Changelog — GMH224 fork
 
+## 0.1.36.0 — 2026-11-16 — measured light at the house
+
+Design record: `OMSF_v0_1_36_House_GHI_Spec.md`; interface:
+`docs/house_ghi_interface.md`. Release audit: `omsf_v0.1.36.0_release_audit.md`.
+
+### Added (learning hub)
+- **Sensor *House light (measured)*** (`sensor.solar_forecast_learning_house_ghi`):
+  global horizontal irradiance (W/m²) of the last complete 15-minute window,
+  from the inverters' energy through the members' PV model; quality
+  good/uncertain/bad with a reason, `unavailable` when bad. Attributes:
+  window start/end (UTC), clear-sky index and GHI, hour value and quality,
+  last 8 windows, version, today's counts by reason.
+- Independent of every forecast and of the learning (synthetic clear-sky
+  light, measured station temperature, no learned factor).
+- Every window stored two years; export `house_ghi.csv`, `house_ghi_days.csv`,
+  `settings.json` → `house_ghi` (version history, rule parameters).
+- Diagnostics block `house_ghi`.
+
+### Changed
+- **Same-day correction:** a newly measured valid signal makes the hub refresh
+  the arrays at once (bounded to 60 s) before decisions are recorded. Found in
+  the review of 16 Nov: on 5–8 Nov the signal at sunrise + 1 h existed but was
+  not yet in the served forecast.
+- A full learning reset keeps the house-light history (a measurement).
+
 ## 0.1.35.1 — 2026-10-21 — station check and same-day signal fixes
 
 Found in the owner's export of 21 Oct (14 days of data). Release audit:

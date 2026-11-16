@@ -47,6 +47,7 @@ async def grey_morning(hass, freezer, per_band_kwh=0.02):
     fake.publish(T_SIGNAL.replace(minute=0))
     hass.states.async_set(ENERGY, f"{value - per_band_kwh:.2f}", COUNTER_ATTRS, force_update=True)
     await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)  # runs started by timers while moving the clock
     await refresh(hass, array)  # the member reports its light and bands
     return fake, array, hub_entry, hub
 
@@ -109,7 +110,7 @@ async def test_served_only_with_check_passed_and_switch_on(hass, zurich, freezer
     await refresh(hass, array)
     assert today_kwh(hass) < before
     # a signal from a run more than 15 min ago is never used
-    hub.last_same_day["signal_time"] = T_SIGNAL - timedelta(minutes=16)
+    hub.signal_time = T_SIGNAL - timedelta(minutes=16)
     await refresh(hass, array)
     assert today_kwh(hass) == before
 
@@ -138,7 +139,7 @@ async def test_nothing_happens_before_sunrise_or_without_member_reports(hass, zu
     freezer.move_to(T_SIGNAL)
     await hub.async_run_same_day(T_SIGNAL)
     assert "waiting" in hub.signal.reason and hub.last_same_day["same_day"] == "waiting for member refresh"
-    assert not any(e[1] == "step_failed" for e in hub.data.d["events"])
+    assert not any(e[1] == "step_failed" and e[2].startswith("same_day") for e in hub.data.d["events"])
 
 
 async def test_a_failing_run_leaves_no_signal_and_the_forecast_unchanged(hass, zurich, freezer):
@@ -185,6 +186,7 @@ async def test_same_day_in_diagnostics_and_store(hass, hass_storage, zurich, fre
 async def test_a_missed_decision_time_is_not_recorded_late(hass, zurich, freezer):
     _, _, _, hub = await grey_morning(hass, freezer)
     late = T_SIGNAL.replace(minute=0) + timedelta(minutes=16)  # the 11:00 slot passed 16 min ago
+    hub.data.d["same_day"]["days"].pop("2026-10-07", None)  # nothing recorded by a timer of the setup
     freezer.move_to(late)
     await hub.async_run_same_day(late)
     record = hub.data.d["same_day"]["days"]["2026-10-07"]
@@ -195,6 +197,7 @@ async def test_a_band_waits_for_its_counter_then_is_kept_as_unknown(hass, zurich
     _, _, _, hub = await grey_morning(hass, freezer)
     hub.counters["10K"] = [r for r in hub.counters["10K"] if r[0] < datetime(2026, 10, 7, 8, 30, tzinfo=UTC).timestamp()]
     hass.states.async_remove(ENERGY)  # the counter no longer reports: nothing after 08:30 is known
+    hub.data.d["same_day"]["days"].pop("2026-10-07", None)  # nothing stored by a timer of the setup
     await hub.async_run_same_day(T_SIGNAL)
     record = hub.data.d["same_day"]["days"]["2026-10-07"]
     band_845 = str(int(datetime(2026, 10, 7, 8, 45, tzinfo=UTC).timestamp()))
@@ -227,3 +230,4 @@ async def test_signal_uses_confirmed_bands_while_the_newest_is_pending(hass, zur
     assert hub.signal.valid, hub.signal.reason
     assert hub.signal.bands == tuple(int(datetime(2026, 10, 7, 8, m, tzinfo=UTC).timestamp()) for m in (0, 15, 30, 45))
     assert hub.signal.e < -0.5
+

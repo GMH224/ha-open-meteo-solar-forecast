@@ -37,6 +37,9 @@ REC = PKG + "recorder.py"
 # 0.1.35: same-day correction
 SDM = PKG + "same_day.py"
 SENS = PKG + "sensor.py"
+# 0.1.36: measured light at the house
+HGM = PKG + "house_ghi.py"
+DIAG = PKG + "diagnostics.py"
 
 # (id, description, file, original, mutated)
 MUTATIONS = [
@@ -798,6 +801,78 @@ MUTATIONS = [
     ("M270", 'newest band skipped only when every group is pending', SDM,
      '        pending = any((measured.get(newest) or {}).get(g) is None for g in groups)',
      '        pending = all((measured.get(newest) or {}).get(g) is None for g in groups)'),
+    # 0.1.36: measured light at the house; member refresh on a new signal
+    ("M271", 'house light: no bad limit at low sun', HGM,
+     '    if elevation < LOW_SUN_BAD_DEG:\n        return bad("low_sun")',
+     '    if False:\n        return bad("low_sun")'),
+    ("M272", 'house light: no uncertain band at low sun', HGM,
+     '    elif elevation < LOW_SUN_UNCERTAIN_DEG:', '    elif False:'),
+    ("M273", 'house light: clipping limit itself not bad', HGM,
+     '    if load >= CLIP_BAD:', '    if load > CLIP_BAD:'),
+    ("M274", 'house light: clipping judged on the least loaded inverter', HGM,
+     '    load = max(loads, default=0.0)', '    load = min(loads, default=0.0)'),
+    ("M275", "house light: the 5K's start-up wait ignored", HGM,
+     '    if sunrise is not None and start < sunrise.timestamp() + SIGNAL_AFTER_SUNRISE_S:',
+     '    if sunrise is not None and start < sunrise.timestamp():'),
+    ("M276", 'house light: a missing counter taken as zero', HGM,
+     '    if any(value is None for value in measured.values()) or not measured:',
+     '    if not measured:'),
+    ("M277", 'house light: snow ignored', HGM,
+     '    if snow:\n        return bad("snow", k)', '    if False:\n        return bad("snow", k)'),
+    ("M278", 'house light: GHI not scaled by the clear-sky GHI', HGM,
+     '    ghi = round(k * clear_ghi, 1)', '    ghi = round(k * 1000.0, 1)'),
+    ("M279", 'house light: mixed sky judged on k instead of the diffuse fraction', HGM,
+     '    elif MIXED_KD_LOW <= erbs(k * kt_clear) <= MIXED_KD_HIGH:',
+     '    elif MIXED_KD_LOW <= erbs(k) <= MIXED_KD_HIGH:'),
+    ("M280", 'house light: clear-sky mean over the wrong number of instants', HGM,
+     '    return total / CLEAR_SAMPLES', '    return total / (CLEAR_SAMPLES - 1)'),
+    ("M281", 'house light: snow test without the temperature', HGM,
+     '        verdicts.append(hour.temperature <= SNOW_MAX_TEMP_C and hour.house_k <= SNOW_RATIO * hour.station_k)',
+     '        verdicts.append(hour.house_k <= SNOW_RATIO * hour.station_k)'),
+    ("M282", 'house light: snow from one hour of two', HGM,
+     '    return all(verdicts)', '    return any(verdicts)'),
+    ("M283", 'house light: hour value with a missing window', HGM,
+     '    if any(w is None or w.quality == BAD or w.ghi is None for w in items):',
+     '    if any(w is not None and w.quality == BAD for w in items):'),
+    ("M284", 'house light: stale window still published', HGM,
+     '        and now.timestamp() - window.end <= PUBLISH_MAX_AGE_S\n    )',
+     '        and True\n    )'),
+    ("M285", 'house light: bad window published', HGM,
+     '        and window.quality != BAD\n', '\n'),
+    ("M286", 'house light: version recorded at every run', HGM,
+     '    if history and history[-1][1] == VERSION:', '    if False:'),
+    ("M287", 'house light: stored bad window with a value accepted', HGM,
+     '        if quality == BAD and ghi is not None:', '        if False:'),
+    ("M288", 'house light: retention longer than two years', HGM,
+     '    limit = (date.fromisoformat(today) - timedelta(days=RETENTION_DAYS)).isoformat()\n    old = [key',
+     '    limit = (date.fromisoformat(today) - timedelta(days=RETENTION_DAYS + 30)).isoformat()\n    old = [key'),
+    ("M289", 'house light: model run with the forecast temperature', HUB,
+     '                    bands = await coordinator.async_model_bands(records, temperatures, offset)',
+     '                    bands = await coordinator.async_model_bands(records, {t: 12.0 for t in temperatures}, offset)'),
+    ("M290", 'house light: missing station temperature not flagged', HUB,
+     '        return out, latest is not None', '        return out, True'),
+    ("M291", 'house light: inverter limit not scaled to the window', HUB,
+     '            out[group.name] = watts / 1000.0 * HG.WINDOW_S / L.HOUR_S if watts > 0 else None',
+     '            out[group.name] = watts / 1000.0 if watts > 0 else None'),
+    ("M292", 'house light: no wait for the counters', HUB,
+     '            if any(v is None for v in measured.values()) and now.timestamp() - end < HG.COUNTER_WAIT_S:',
+     '            if False:'),
+    ("M293", 'house light: full reset deletes the measurements', HUB,
+     '                self.data.d["house_ghi"] = house\n', '\n'),
+    ("M294", 'same-day: members not refreshed on a new signal', HUB,
+     '        if self.signal.valid:\n            # 0.1.36', '        if False:\n            # 0.1.36'),
+    ("M295", 'house light: snow not carried when the station cannot tell', HUB,
+     '        return bool(earlier) and windows[str(max(earlier))][4] == "snow"', '        return False'),
+    ("M296", 'house light: sensor available with a bad window', ENT,
+     '        return HG.published(self._latest(), dt_util.utcnow())', '        return True'),
+    ("M297", 'house light: stored section not validated', LRN,
+     '            data["house_ghi"] = validate_house(data["house_ghi"])',
+     '            data["house_ghi"] = data["house_ghi"]'),
+    ("M298", 'house light: view shares the windows with the event loop', LRN,
+     '        d["house_ghi"] = {"windows": dict(house["windows"]),', '        d["house_ghi"] = {"windows": house["windows"],'),
+    ("M299", 'house light: retention purge skips the windows', LRN,
+     '        for key in [k for k in self.d["house_ghi"]["windows"] if int(k) < limit]:',
+     '        for key in [k for k in self.d["house_ghi"]["windows"] if int(k) < 0]:'),
 ]
 
 
@@ -826,8 +901,10 @@ def run(root: Path, only: str | None, start: str | None = None, stop: str | None
             # pytest de-duplicates the files listed again via "tests".
             # The tests closest to the mutated file run first (a caught
             # mutation stops at the first failure); then everything.
-            if rel in (SDM, SENS, LRN, HUB, ENT, REC):
-                patterns = ("test_same_day*.py", "test_learning_*.py")
+            if rel in (HGM, DIAG):
+                patterns = ("test_house_ghi*.py",)
+            elif rel in (SDM, SENS, LRN, HUB, ENT, REC):
+                patterns = ("test_house_ghi*.py", "test_same_day*.py", "test_learning_*.py")
             elif rel in (SHD, SHP):
                 patterns = ("test_shading_*.py",)
             else:
