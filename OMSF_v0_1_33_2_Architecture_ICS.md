@@ -11,6 +11,28 @@ also a hybrid of both.
 
 ---
 
+## 0h. Update for 0.1.37 — Solcast as a second light forecast
+
+Design record: [`OMSF_v0_1_37_Solcast_Blend_Spec.md`](OMSF_v0_1_37_Solcast_Blend_Spec.md); release audit:
+[`omsf_v0.1.37.0_release_audit.md`](omsf_v0.1.37.0_release_audit.md).
+
+The hub gains its first outbound connection of its own (Solcast hobbyist API) and a learned combination stage
+between the weather learning and the same-day correction.
+
+| ID | Requirement | Measure |
+|---|---|---|
+| R57 | the external API is used within its terms and budget | slots, per-UTC-day budget counted before sending, reserve for one retry, no retry on authorisation errors |
+| R58 | the API key is a secret | only in the hub options (password field); redacted in diagnostics; never stored elsewhere or exported |
+| R59 | a second forecast never acts unproven | learned weight from 0, out-of-sample check, owner switch, nightly re-check |
+| R60 | Solcast faults do not reach the forecast | missing/old/invalid answers → ours alone; any failure → forecast unchanged |
+
+| ID | Failure | Effect |
+|---|---|---|
+| F37 | Solcast unreachable or busy | one retry; afterwards the hour uses ours; event after 3 failures |
+| F38 | key or site wrong | no retry; state shows the error; forecast unchanged |
+| F39 | answer malformed | rejected as a whole, not stored |
+| F40 | combination learned on few days | weight pulled to 0; check needs 14 days |
+
 ## 0g. Update for 0.1.36 — measured light at the house
 
 Design record: [`OMSF_v0_1_36_House_GHI_Spec.md`](OMSF_v0_1_36_House_GHI_Spec.md); interface:

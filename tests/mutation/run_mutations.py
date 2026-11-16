@@ -40,6 +40,9 @@ SENS = PKG + "sensor.py"
 # 0.1.36: measured light at the house
 HGM = PKG + "house_ghi.py"
 DIAG = PKG + "diagnostics.py"
+# 0.1.37: Solcast combination
+SCM = PKG + "solcast.py"
+CFG = PKG + "config_flow.py"
 
 # (id, description, file, original, mutated)
 MUTATIONS = [
@@ -873,6 +876,87 @@ MUTATIONS = [
     ("M299", 'house light: retention purge skips the windows', LRN,
      '        for key in [k for k in self.d["house_ghi"]["windows"] if int(k) < limit]:',
      '        for key in [k for k in self.d["house_ghi"]["windows"] if int(k) < 0]:'),
+    # 0.1.37: Solcast as a second light forecast
+    ("M300", 'Solcast: planned calls use the whole limit', SCM,
+     '    return max(limit - RESERVE_CALLS, 0)', '    return max(limit, 0)'),
+    ("M301", 'Solcast: retry above the daily limit', SCM,
+     '    if retry_at is not None and now.timestamp() >= retry_at and used < limit:',
+     '    if retry_at is not None and now.timestamp() >= retry_at:'),
+    ("M302", 'Solcast: missed slot still called', SCM,
+     '        if moment <= now < moment + timedelta(seconds=SLOT_WINDOW_S):', '        if moment <= now:'),
+    ("M303", 'Solcast: slot called twice', SCM,
+     '        if name in done:\n            continue\n', '\n'),
+    ("M304", 'Solcast: call not counted', SCM,
+     '    section["calls"][day] = int(section["calls"].get(day, 0)) + 1',
+     '    section["calls"][day] = int(section["calls"].get(day, 0)) + 0'),
+    ("M305", 'Solcast: more than one retry pending', SCM,
+     '    if retry and section.get("retry_at") is None:', '    if retry:'),
+    ("M306", 'Solcast: negative power accepted', SCM,
+     '    if value < 0 or value > MAX_KW_PER_KWP:', '    if value > MAX_KW_PER_KWP:'),
+    ("M307", 'Solcast: estimates not checked for order', SCM,
+     '        if not p10 <= p + 1e-9 or not p <= p90 + 1e-9:', '        if False:'),
+    ("M308", 'Solcast: stale answer used', SCM,
+     '    if issued > now.timestamp() or now.timestamp() - issued > ISSUE_MAX_AGE_S:',
+     '    if issued > now.timestamp():'),
+    ("M309", 'Solcast: hour from one half hour', SCM,
+     '    if first is None or second is None:', '    if first is None and second is None:'),
+    ("M310", 'Solcast: light not limited to clear sky', SCM,
+     '    return _clamp(kt, 0.0, KT_S_CLEAR_MARGIN * clear_kt(key, latitude, longitude))',
+     '    return max(kt, 0.0)'),
+    ("M311", "Solcast: diffuse share taken from ours only", SCM,
+     '    diffuse = (1.0 - w) * kd * kt + w * erbs(kt_s) * kt_s', '    diffuse = kd * kt_b'),
+    ("M312", 'Solcast: weight not pulled towards zero', SCM,
+     '        weights.append(round(_clamp(w_hat * count[b] / (count[b] + W_PRIOR_HOURS), 0.0, 1.0), 4))',
+     '        weights.append(round(_clamp(w_hat, 0.0, 1.0), 4))'),
+    ("M313", 'Solcast: weight not clamped', SCM,
+     '        weights.append(round(_clamp(w_hat * count[b] / (count[b] + W_PRIOR_HOURS), 0.0, 1.0), 4))',
+     '        weights.append(round(w_hat * count[b] / (count[b] + W_PRIOR_HOURS), 4))'),
+    ("M314", 'Solcast: factor not pulled towards the prior', SCM,
+     '    c = (sum_pg + C_PRIOR_HOURS * mean_pp * C_PRIOR) / (sum_pp + C_PRIOR_HOURS * mean_pp)',
+     '    c = sum_pg / sum_pp'),
+    ("M315", 'Solcast: learning window open to the future', SCM,
+     '    return [int(k) for k in pairs if first <= int(k) < last]', '    return [int(k) for k in pairs if first <= int(k)]'),
+    ("M316", 'Solcast: check learns from the judged day', SCM,
+     '        blend, _info = learn_blend(section["pairs"], truth, day_start, latitude, longitude)',
+     '        blend, _info = learn_blend(section["pairs"], truth, day_start + DAY_S, latitude, longitude)'),
+    ("M317", 'Solcast: check ignores the recent days', SCM,
+     '    if days >= GATE_MIN_DAYS and better_recent < GATE_RECENT_BETTER:', '    if False:'),
+    ("M318", 'Solcast: check ignores the energy', SCM,
+     '            mae_b <= mae_o * (1 + GATE_ENERGY_TOLERANCE) + 1e-9)', '            True)'),
+    ("M319", 'Solcast: check without minimum days', SCM,
+     '    if days < GATE_MIN_DAYS:\n        reasons.append', '    if days < 1:\n        reasons.append'),
+    ("M320", 'Solcast: combination served without its check', HUB,
+     '        return (self.solcast_options is not None and self.data.solcast_switch and self.solcast_gate_passed',
+     '        return (self.solcast_options is not None and self.data.solcast_switch'),
+    ("M321", 'Solcast: combination served without the switch', HUB,
+     '        return (self.solcast_options is not None and self.data.solcast_switch and self.solcast_gate_passed',
+     '        return (self.solcast_options is not None and self.solcast_gate_passed'),
+    ("M322", 'Solcast: calls without configuration', HUB,
+     '        if options is None:\n            return "not configured"\n        key, site, limit = options',
+     '        if False:\n            return "not configured"\n        key, site, limit = options or ("", "", 10)'),
+    ("M323", 'Solcast: a rejected key is retried', HUB,
+     '        self.retry = status == 429 or status >= 500', '        self.retry = True'),
+    ("M324", 'Solcast: combination served regardless of the hub', COORD,
+     '        if blend["estimate"] is not None and blend["snapshot"] is not None and hub.blend_applies:',
+     '        if blend["estimate"] is not None and blend["snapshot"] is not None:'),
+    ("M325", 'Solcast: key not redacted in diagnostics', DIAG,
+     '    "solcast_api_key",  # 0.1.37\n', '\n'),
+    ("M326", 'Solcast: full reset loses the call budget', HUB,
+     '                for key in ("calls", "slots",', '                for key in ("slots",'),
+    ("M327", 'Solcast: decision recorded before sunrise + 1 h', HUB,
+     '        if L.decision_due(now, self.tz, self.latitude, self.longitude):\n            changed |= SC.record_decision_hours',
+     '        if True:\n            changed |= SC.record_decision_hours'),
+    ("M328", 'Solcast: view shares the pairs with the event loop', SCM,
+     '        out[key] = {k: (dict(v) if isinstance(v, dict) else v) for k, v in section[key].items()}',
+     '        out[key] = section[key]'),
+    ("M329", 'Solcast: stored section not validated', LRN,
+     '            data["solcast"] = validate_solcast(data["solcast"])', '            data["solcast"] = data["solcast"]'),
+    ("M330", 'Solcast: pairs kept longer', SCM,
+     '    for name, days in (("issues", RAW_RETENTION_DAYS), ("pairs", PAIR_RETENTION_DAYS)):',
+     '    for name, days in (("issues", RAW_RETENTION_DAYS), ("pairs", PAIR_RETENTION_DAYS + 10)):'),
+    ("M331", 'Solcast: an empty key still configures the site', CFG,
+     '    if not key:  # Solcast off; the other fields do not matter\n        return {}, errors',
+     '    if False:  # Solcast off; the other fields do not matter\n        return {}, errors'),
 ]
 
 
@@ -901,10 +985,12 @@ def run(root: Path, only: str | None, start: str | None = None, stop: str | None
             # pytest de-duplicates the files listed again via "tests".
             # The tests closest to the mutated file run first (a caught
             # mutation stops at the first failure); then everything.
-            if rel in (HGM, DIAG):
-                patterns = ("test_house_ghi*.py",)
+            if rel == SCM:
+                patterns = ("test_solcast*.py",)
+            elif rel in (HGM, DIAG):
+                patterns = ("test_solcast*.py", "test_house_ghi*.py")
             elif rel in (SDM, SENS, LRN, HUB, ENT, REC):
-                patterns = ("test_house_ghi*.py", "test_same_day*.py", "test_learning_*.py")
+                patterns = ("test_solcast*.py", "test_house_ghi*.py", "test_same_day*.py", "test_learning_*.py")
             elif rel in (SHD, SHP):
                 patterns = ("test_shading_*.py",)
             else:

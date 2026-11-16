@@ -11,6 +11,7 @@ Applies from v0.1.33.2 (updated for 0.1.34 to 0.1.35.1). Architecture and ration
 | `runtime.py` | typed entry aliases (`ArrayConfigEntry`, `HubConfigEntry`), TypedDict models, loaded-entry lookups (0.1.34) | yes (types only) |
 | `learning.py` | **pure** learning engine: parsing, predictors, archive, analog ensemble, application, stage 2, quality control, gate, state, store (de)serialisation, export text (0.1.34) | **no** (enforced by test) |
 | `house_ghi.py` | **pure** measured light at the house: window clear-sky GHI and elevation, quality rules, snow verdict, hour value, day counts, sensor attributes, store section, export (0.1.36) | **no** (enforced by test) |
+| `solcast.py` | **pure** Solcast combination: call slots and budget, answer parsing, light from the flat site, pairs, factor and weight learning, out-of-sample check, store section, export (0.1.37) | **no** (enforced by test) |
 | `same_day.py` | **pure** same-day correction engine: clear-sky index, response curves and inversion, counter bands, signal, persistence table (β, σ), cautious index, decision times, check, store section (0.1.35) | **no** (enforced by test) |
 | `learning_hub.py` | HA glue for learning: store, station and counter listeners, hourly/nightly/5-minute runs, recorder statistics, coordinator interface, export files (0.1.34; same-day 0.1.35) | yes |
 | `learning_entities.py`, `switch.py` | hub sensors and switches (0.1.34) | yes |
@@ -113,6 +114,14 @@ suite before changing the pin.**
     its date, M286); consumers rely on it. The history survives a full reset
     (M293) and is kept two years (M288, M299).
 
+17. Solcast (0.1.37): **the key and site ID never leave the hub's options** -
+    not into the store, an attribute, the export or diagnostics (M325). A
+    call is counted and saved before it is sent; planned calls stop one
+    below the limit (M300, M301, M304). The weights start at 0, are pulled
+    towards 0 and stay in [0, 1] (M312, M313); learning and the check never
+    see the judged day or later (M315, M316). Nothing is served without the
+    check and the switch (M320, M321, M324).
+
 ## Running the tests
 
 ```bash
@@ -121,7 +130,7 @@ python3.13 -m venv .venv
 .venv/bin/python -m pytest -q            # full suite (~15 s)
 .venv/bin/python -m pyflakes custom_components tests tools
 .venv/bin/python -m mypy custom_components/open_meteo_solar_forecast   # 38 known findings in pre-0.1.34 modules, none new
-.venv/bin/python tests/mutation/run_mutations.py --out mutation_results.json   # 299 mutations, hours on 2 CPUs; --from/--to/--only
+.venv/bin/python tests/mutation/run_mutations.py --out mutation_results.json   # 331 mutations, hours on 2 CPUs; --from/--to/--only
 ```
 
 `pytest-homeassistant-custom-component` brings a real Home Assistant and

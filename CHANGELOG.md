@@ -1,5 +1,31 @@
 # Changelog — GMH224 fork
 
+## 0.1.37.0 — 2026-11-16 — Solcast as a second light forecast
+
+Design record: `OMSF_v0_1_37_Solcast_Blend_Spec.md`. Release audit:
+`omsf_v0.1.37.0_release_audit.md`.
+
+### Added (learning hub)
+- **Solcast combination.** Optional hub page *Solcast*: API key, site ID of a
+  flat hobbyist site (tilt 0°, 1 kW DC/AC, 100 %), daily limit. The hub calls
+  Solcast itself at fixed local times and 40 min after sunrise, within the
+  daily budget (one call kept for a retry; counted before sending; per UTC
+  day), stores every answer and learns:
+  - a factor from the flat site's power to light (against the station);
+  - one weight per lead time (0–3, 3–6, 6–18, 18–30, 30–54 h) for combining
+    Solcast's light with the light used today, starting at and pulled
+    towards 0.
+- **Served only** with its own out-of-sample check passed (≥ 14 days, light
+  ≥ 5 % better, better on 5 of the last 7 days, day energy not worse) and the
+  switch *Solcast combination* on; otherwise shadow. Switches itself off when
+  the check fails.
+- Sensors *Solcast combination* (state) and *Solcast improvement*; export
+  files `solcast_*.csv`; diagnostics block `solcast` (key and site redacted).
+
+### Notes
+- Remove the HACS Solcast integration (or its polling automation) when this
+  release goes live: both would share the same daily request budget.
+
 ## 0.1.36.0 — 2026-11-16 — measured light at the house
 
 Design record: `OMSF_v0_1_36_House_GHI_Spec.md`; interface:

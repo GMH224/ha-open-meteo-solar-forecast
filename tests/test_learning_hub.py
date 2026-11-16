@@ -653,8 +653,17 @@ async def test_flow_offers_the_hub_once_an_array_exists_and_validates(hass, zuri
     assert result["errors"] == {"name": "group_name_duplicate", "members": "member_twice"}
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"name": "5K", "energy_entity": ENERGY_2, "members": [om2.entry_id]})
+    assert result["step_id"] == "hub_solcast"  # 0.1.37: optional Solcast page
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"solcast_api_key": "secret", "solcast_site_id": ""})
+    assert result["errors"] == {"solcast_site_id": "solcast_site_required"}
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"solcast_api_key": "secret", "solcast_site_id": "a b"})
+    assert result["errors"] == {"solcast_site_id": "solcast_site_invalid"}
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"solcast_api_key": ""})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {CONF_ENTRY_TYPE: ENTRY_TYPE_LEARNING_HUB}
+    assert "solcast_api_key" not in result["options"]  # empty key: Solcast off
     assert result["options"][CONF_GROUPS] == [
         {"name": "10K", "energy_entity": ENERGY, "members": [array.entry_id]},
         {"name": "5K", "energy_entity": ENERGY_2, "members": [om2.entry_id]},
@@ -675,9 +684,14 @@ async def test_hub_options_flow_walks_the_stored_groups(hass, zurich, freezer):
     assert schema_defaults["name"] == "10K" and schema_defaults["members"] == [array.entry_id]
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"name": "Big", "energy_entity": ENERGY, "members": [array.entry_id]})
+    assert result["step_id"] == "hub_solcast"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"solcast_api_key": "secret", "solcast_site_id": "abcd-1234-ef56-7890", "solcast_api_limit": 10})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     assert hub_entry.options[CONF_GROUPS][0]["name"] == "Big"
+    assert hub_entry.options["solcast_site_id"] == "abcd-1234-ef56-7890"
+    assert get_hub(hass).solcast_options == ("secret", "abcd-1234-ef56-7890", 10)
     assert get_hub(hass).groups[0].name == "Big"
 
 

@@ -399,6 +399,29 @@ unobstructed square metre, like a weather station):
 Interface for consumers: [`docs/house_ghi_interface.md`](docs/house_ghi_interface.md).
 Design record: `OMSF_v0_1_36_House_GHI_Spec.md`.
 
+### Solcast as a second light forecast (0.1.37)
+
+An optional, independent forecast next to your weather source, combined by a
+weight the hub learns from your own days.
+
+1. Create a free Solcast account ("Home PV System") and **one flat site** at
+   your home: tilt 0°, azimuth 180, capacity 1 kW DC and 1 kW AC, efficiency
+   100 %. Your real arrays stay in this integration (orientation, shading,
+   inverter limits); Solcast only supplies "how bright".
+2. Hub options → page *Solcast*: API key, the flat site's ID, daily limit
+   (10 for new accounts). Leave the key empty to keep Solcast off.
+3. Do not poll the same key elsewhere (e.g. the HACS Solcast integration):
+   the hub plans one call fewer than the limit and keeps one for a retry.
+
+The hub calls Solcast at 05:07, 09:37, 11:07, 12:37, 14:07, 15:37, 20:37 and
+40 minutes after sunrise (before an automation at sunrise + 1 h). Per lead
+time it learns how much of Solcast's light to mix in - **starting at zero and
+staying there if Solcast does not help**. It acts only after its own check
+(at least 14 days, at least 5 % better light at the morning decision forecast,
+better on 5 of the last 7 days, day energy not worse) and with the switch
+*Solcast combination* on; the check runs every night and switches it off again
+if it stops helping. Design record: `OMSF_v0_1_37_Solcast_Blend_Spec.md`.
+
 **What to expect:** two weeks of collecting; corrections for common autumn
 situations (fog/stratus, broken cloud) after 3-6 weeks; broad coverage after
 about 10 weeks. Clear days do not change - the physics already handles
