@@ -74,6 +74,20 @@
           "energy_entity": "Gesamte erzeugte Energie (kWh/Wh, State-Class total oder total_increasing), z. B. DC-Eingangsenergie des Wechselrichters. Gelesen aus der Langzeitstatistik.",
           "name": "Kurzer Name, z. B. 10K. Wird in Entitätsnamen verwendet."
         }
+      },
+      "hub_solcast": {
+        "title": "Lern-Hub: Solcast (optional)",
+        "description": "Eine kostenlose Solcast-Hobby-Dachanlage, die flach liegt (Neigung 0°, 1 kW DC und AC, Wirkungsgrad 100 %), liefert eine zweite Lichtprognose. Der Hub ruft sie selbst ab (höchstens das Tageslimit, ein Abruf bleibt in Reserve) und kombiniert sie mit einem gelernten Gewicht, das bei null beginnt; sie wirkt erst nach ihrer eigenen Prüfung und mit eingeschaltetem Schalter. Schlüssel leer lassen, um Solcast auszuschalten.",
+        "data": {
+          "solcast_api_key": "Solcast-API-Schlüssel",
+          "solcast_site_id": "Solcast-Anlagen-ID (die flache Anlage)",
+          "solcast_api_limit": "Tägliches Abruflimit"
+        },
+        "data_description": {
+          "solcast_api_key": "Aus dem Kontomenü des Solcast-Toolkits. Wird in der Home-Assistant-Konfiguration gespeichert, nie exportiert.",
+          "solcast_site_id": "Ressourcen-ID der flachen Anlage, z. B. abcd-1234-ef56-7890.",
+          "solcast_api_limit": "10 für neue Hobby-Konten. Der Hub plant einen Abruf weniger und hält einen für eine Wiederholung zurück."
+        }
       }
     },
     "error": {
@@ -91,7 +105,9 @@
       "member_twice": "Ein Eintrag kann nur zu einer Gruppe gehören.",
       "member_source_mismatch": "Alle Einträge müssen dieselbe Wetter-Entität und denselben Strahlungssensor nutzen.",
       "group_name_invalid": "Name mit 1 bis 32 Zeichen eingeben.",
-      "group_name_duplicate": "Dieser Gruppenname ist bereits vergeben."
+      "group_name_duplicate": "Dieser Gruppenname ist bereits vergeben.",
+      "solcast_site_required": "Bitte die Anlagen-ID der flachen Solcast-Anlage eingeben",
+      "solcast_site_invalid": "Das sieht nicht wie eine Solcast-Anlagen-ID aus"
     },
     "abort": {
       "already_configured": "Der Lern-Hub ist bereits eingerichtet."
@@ -218,6 +234,20 @@
       },
       "cautious_coverage": {
         "name": "Abdeckung vorsichtige Prognose"
+      },
+      "solcast_blend": {
+        "name": "Solcast-Kombination",
+        "state": {
+          "not_configured": "Nicht eingerichtet",
+          "collecting": "Sammelt Daten",
+          "shadow": "Schatten (berechnet, nicht angewendet)",
+          "eligible": "Bereit (Schalter aus)",
+          "applied": "Angewendet",
+          "paused": "Pausiert"
+        }
+      },
+      "solcast_improvement": {
+        "name": "Solcast-Verbesserung"
       }
     },
     "switch": {
@@ -229,6 +259,9 @@
       },
       "same_day_switch": {
         "name": "Tageskorrektur"
+      },
+      "solcast_switch": {
+        "name": "Solcast-Kombination"
       }
     }
   },
@@ -249,7 +282,9 @@
       "member_twice": "Ein Eintrag kann nur zu einer Gruppe gehören.",
       "member_source_mismatch": "Alle Einträge müssen dieselbe Wetter-Entität und denselben Strahlungssensor nutzen.",
       "group_name_invalid": "Name mit 1 bis 32 Zeichen eingeben.",
-      "group_name_duplicate": "Dieser Gruppenname ist bereits vergeben."
+      "group_name_duplicate": "Dieser Gruppenname ist bereits vergeben.",
+      "solcast_site_required": "Bitte die Anlagen-ID der flachen Solcast-Anlage eingeben",
+      "solcast_site_invalid": "Das sieht nicht wie eine Solcast-Anlagen-ID aus"
     },
     "step": {
       "init": {
@@ -319,6 +354,20 @@
         "data_description": {
           "energy_entity": "Gesamte erzeugte Energie (kWh/Wh, State-Class total oder total_increasing), z. B. DC-Eingangsenergie des Wechselrichters. Gelesen aus der Langzeitstatistik.",
           "name": "Kurzer Name, z. B. 10K. Wird in Entitätsnamen verwendet."
+        }
+      },
+      "hub_solcast": {
+        "title": "Lern-Hub: Solcast (optional)",
+        "description": "Eine kostenlose Solcast-Hobby-Dachanlage, die flach liegt (Neigung 0°, 1 kW DC und AC, Wirkungsgrad 100 %), liefert eine zweite Lichtprognose. Der Hub ruft sie selbst ab (höchstens das Tageslimit, ein Abruf bleibt in Reserve) und kombiniert sie mit einem gelernten Gewicht, das bei null beginnt; sie wirkt erst nach ihrer eigenen Prüfung und mit eingeschaltetem Schalter. Schlüssel leer lassen, um Solcast auszuschalten.",
+        "data": {
+          "solcast_api_key": "Solcast-API-Schlüssel",
+          "solcast_site_id": "Solcast-Anlagen-ID (die flache Anlage)",
+          "solcast_api_limit": "Tägliches Abruflimit"
+        },
+        "data_description": {
+          "solcast_api_key": "Aus dem Kontomenü des Solcast-Toolkits. Wird in der Home-Assistant-Konfiguration gespeichert, nie exportiert.",
+          "solcast_site_id": "Ressourcen-ID der flachen Anlage, z. B. abcd-1234-ef56-7890.",
+          "solcast_api_limit": "10 für neue Hobby-Konten. Der Hub plant einen Abruf weniger und hält einen für eine Wiederholung zurück."
         }
       }
     }

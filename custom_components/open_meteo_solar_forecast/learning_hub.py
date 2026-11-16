@@ -21,6 +21,7 @@ import bisect
 import json
 import math
 import os
+import random
 import shutil
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -28,7 +29,10 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
+
+import aiohttp
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -39,6 +43,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import CoreState, Event, EventStateChangedData, HomeAssistant, State, callback
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
@@ -51,12 +56,16 @@ import numpy as np
 from . import house_ghi as HG
 from . import learning as L
 from . import same_day as SD
+from . import solcast as SC
 from .const import (
     CONF_GROUP_ENERGY_ENTITY,
     CONF_GROUP_MEMBERS,
     CONF_GROUP_NAME,
     CONF_GROUPS,
     CONF_INVERTER_POWER,
+    CONF_SOLCAST_API_KEY,
+    CONF_SOLCAST_API_LIMIT,
+    CONF_SOLCAST_SITE_ID,
     CONF_LOCAL_IRRADIANCE_ENTITY,
     CONF_LOCAL_WEATHER_ENTITY,
     CONF_MODULES_POWER,
@@ -230,6 +239,17 @@ def validate_groups(hass: HomeAssistant, groups: Sequence[Mapping[str, Any]]) ->
 # --------------------------------------------------------------------------
 
 
+class _SolcastHTTPError(Exception):
+    """A Solcast answer with an HTTP error status (never carries the key)."""
+
+    def __init__(self, status: int) -> None:
+        self.status = status
+        self.retry = status == 429 or status >= 500
+        meaning = {401: "API key rejected", 403: "API key not allowed", 404: "site not found",
+                   429: "Solcast busy or daily limit reached"}.get(status, "error")
+        super().__init__(f"HTTP {status}: {meaning}")
+
+
 class HubInputError(Exception):
     """An input the hourly run needs is not available."""
 
@@ -285,6 +305,7 @@ class LearningHub:
         self.house_curves_key: tuple[str, float] | None = None
         self.house_temperature_ok = False
         self.last_house_ghi: dict[str, Any] = {}
+        self.last_solcast: dict[str, Any] = {}
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -526,6 +547,205 @@ class LearningHub:
         passed, its switch on and no configuration problem."""
         return self.data.same_day_switch and self.same_day_gate_passed and not self.config_problem
 
+    # -- Solcast (0.1.37) -------------------------------------------------------------------
+
+    @property
+    def solcast_options(self) -> tuple[str, str, int] | None:
+        """(API key, site id, daily limit), or None when not configured."""
+        options = self.entry.options
+        key = str(options.get(CONF_SOLCAST_API_KEY) or "").strip()
+        site = str(options.get(CONF_SOLCAST_SITE_ID) or "").strip()
+        if not key or not site:
+            return None
+        try:
+            limit = int(options.get(CONF_SOLCAST_API_LIMIT) or SC.DEFAULT_API_LIMIT)
+        except (TypeError, ValueError):
+            limit = SC.DEFAULT_API_LIMIT
+        return key, site, max(1, min(limit, 50))
+
+    @property
+    def solcast_gate_passed(self) -> bool:
+        return bool((self.data.d["solcast"].get("gate") or {}).get("passed"))
+
+    @property
+    def blend_applies(self) -> bool:
+        """The combination is served only when configured, its own check
+        passed and the owner's switch is on."""
+        return (self.solcast_options is not None and self.data.solcast_switch and self.solcast_gate_passed
+                and not self.config_problem)
+
+    @property
+    def solcast_state(self) -> str:
+        if self.config_problem:
+            return "paused"
+        return SC.state_of(self.solcast_options is not None, self.data.d["solcast"].get("gate"),
+                           self.data.solcast_switch)
+
+    async def async_set_solcast(self, value: bool) -> None:
+        async with self._lock:
+            changed = self.data.set_solcast(value, dt_util.utcnow())
+            if changed:
+                self._save()
+        if changed:
+            if self.solcast_gate_passed:
+                self._refresh_members()
+            self._notify()
+
+    async def _async_solcast_call(self, now: datetime) -> str:
+        """Call Solcast when a slot is due (at most the daily budget)."""
+        options = self.solcast_options
+        if options is None:
+            return "not configured"
+        key, site, limit = options
+        section = self.data.d["solcast"]
+        day = now.astimezone(self.tz).date().isoformat()
+        sunrise = L.sunrise_utc(day, self.tz, self.latitude, self.longitude)
+        slot = SC.due_call(section, now, self.tz, sunrise, limit)
+        if slot is None:
+            return "nothing due"
+        SC.note_call(section, now, self.tz, slot)
+        self._save()  # the budget counts even if Home Assistant stops during the call
+        error: str | None = None
+        retry = False
+        try:
+            periods = SC.parse_forecast(await self._async_solcast_fetch(key, site), now)
+        except _SolcastHTTPError as err:
+            error, retry = str(err), err.retry
+        except SC.SolcastError as err:
+            error = f"answer not usable: {err}"
+        except (TimeoutError, aiohttp.ClientError) as err:
+            error, retry = f"{type(err).__name__}: {sanitize_error(err)}", True
+        if error is None:
+            SC.store_issue(section, now, periods)
+        before = int(section.get("failures", 0))
+        SC.note_result(section, now, error, retry and slot != "retry", random.random())
+        if error is not None and before < SC.FAILURE_WARN <= section["failures"]:
+            self.data.event(now, "solcast_failing", f"{section['failures']} failed calls in a row: {error}")
+        self._save()
+        if error is None:
+            self._refresh_members()  # the members use the new answer now
+            return f"{slot}: {len(periods)} periods"
+        return f"{slot}: failed ({error})"
+
+    async def _async_solcast_fetch(self, key: str, site: str) -> Any:
+        session = async_get_clientsession(self.hass)
+        url = SC.API_URL.format(site=quote(site, safe="-"))
+        headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
+        async with asyncio.timeout(SC.API_TIMEOUT_S):
+            async with session.get(url, params={"format": "json", "hours": SC.API_HOURS}, headers=headers) as resp:
+                if resp.status == 200:
+                    return await resp.json(content_type=None)
+                raise _SolcastHTTPError(resp.status)
+
+    async def async_blend_plan(
+        self, entry_id: str, base_hours: Mapping[datetime, HourRecord], now: datetime
+    ) -> tuple[dict[datetime, HourRecord] | None, dict[str, Any]]:
+        """The member's light combined with Solcast's (always computed, so
+        the check can judge it; served only when ``blend_applies``). Records
+        the pairs for learning and, once a day, the decision forecast."""
+        info: dict[str, Any] = {"state": self.solcast_state}
+        if self.solcast_options is None or self.config_problem or self.group_for(entry_id) is None:
+            return None, info
+        section = self.data.d["solcast"]
+        latest = SC.latest_issue(section, now)
+        blend = SC.blend_of(section)
+        info.update(issued=None if latest is None else L.key_to_dt(latest[0]).isoformat(),
+                    weights=list(blend.weights), c=blend.c)
+        moment = now.timestamp()
+        today = now.astimezone(self.tz).date().isoformat()
+        today_keys = set(L.local_day_hours(today, self.tz))
+        shifts: dict[int, tuple[float, float]] = {}
+        rows: dict[int, tuple[float, float | None, float]] = {}
+        changed = False
+        for start, record in base_hours.items():
+            if record.ghi is None or record.dhi is None:
+                continue
+            key = L.hour_key(start)
+            e0h, elevation = L.hour_geometry(key, self.latitude, self.longitude)
+            if e0h <= 0:
+                continue
+            kt, kd = L.clearness(record.ghi, record.dhi, e0h)
+            power = SC.hour_power(latest[1], key) if latest is not None else None
+            changed |= SC.record_pair(section, key, kt, power, None if latest is None else latest[0], moment)
+            if key in today_keys:
+                rows[key] = (kt, None if power is None else power[0], e0h)
+            if power is None or elevation < SC.MIN_ELEVATION_APPLY_DEG:
+                continue
+            kt_s = SC.kt_solcast(power[0], blend.c, key, self.latitude, self.longitude)
+            if kt_s is None:
+                continue
+            shift = SC.blend_shift(kt, kd, kt_s, blend.weight(SC.lead_hours(key, moment)))
+            if shift != (0.0, 0.0):
+                shifts[key] = shift
+        if L.decision_due(now, self.tz, self.latitude, self.longitude):
+            changed |= SC.record_decision_hours(section, today, now, rows)
+        if changed:
+            self._save()
+        info["hours_changed"] = len(shifts)
+        if not shifts:
+            return dict(base_hours), info
+        hours, _summary = await self.hass.async_add_executor_job(
+            L.apply_corrections, base_hours, shifts, None, self.latitude, self.longitude
+        )
+        return hours, info
+
+    def report_blend(
+        self, entry_id: str, ours_days: Mapping[date, float], blend_days: Mapping[date, float],
+        complete_days: set[date] | None, now: datetime,
+    ) -> None:
+        """Day energy with and without the combination at the decision forecast."""
+        today = now.astimezone(self.tz).date()
+        if complete_days is not None and today not in complete_days:
+            return
+        ours, blended = ours_days.get(today), blend_days.get(today)
+        if ours is None or blended is None or not L.decision_due(now, self.tz, self.latitude, self.longitude):
+            return
+        if SC.record_decision_energy(self.data.d["solcast"], today.isoformat(), entry_id, ours, blended):
+            self._save()
+
+    async def _async_solcast_nightly(self, now: datetime) -> str:
+        section = self.data.d["solcast"]
+        purged = SC.purge(section, now, self.tz)
+        if self.solcast_options is None:
+            return f"not configured, {purged} purged"
+        view = self.data.view()
+        sc = view.d["solcast"]
+        keys = {int(k) for k in sc["pairs"]}
+        for record in sc["decisions"].values():
+            keys |= {int(k) for k in record["hours"]}
+        truth = SC.truth_from(view.d["station_hours"], L.H["ghi"], keys, self.latitude, self.longitude)
+        blend, info = await self.hass.async_add_executor_job(
+            SC.learn_blend, sc["pairs"], truth, int(now.timestamp()), self.latitude, self.longitude
+        )
+        production = {g.name: self._day_production(view, g.name, sc["decisions"]) for g in self.groups}
+        today = now.astimezone(self.tz).date().isoformat()
+        gate = await self.hass.async_add_executor_job(
+            SC.evaluate_gate, sc, truth, {g.name: list(g.members) for g in self.groups}, production, today,
+            self.latitude, self.longitude,
+        )
+        before, was_passed = self.blend_applies, self.solcast_gate_passed
+        section["blend"] = {"c": blend.c, "weights": list(blend.weights), "computed": now.isoformat(), **info}
+        section["gate"] = {"evaluated": now.isoformat(), **gate}
+        section["gate_history"].append(
+            {"evaluated": now.isoformat(), **{k: gate[k] for k in ("days", "improvement", "better_recent", "passed")}}
+        )
+        del section["gate_history"][: max(0, len(section["gate_history"]) - L.HISTORY_MAX)]
+        if gate["passed"] != was_passed:
+            self.data.event(now, "solcast_gate", ("passed: " if gate["passed"] else "not passed: ")
+                            + ("; ".join(gate["reasons"]) or f"improvement {gate['improvement']}"))
+        if before != self.blend_applies:
+            self._refresh_members()
+        return (f"c {blend.c}, weights {list(blend.weights)}, check "
+                f"{'passed' if gate['passed'] else 'not passed'}, {purged} purged")
+
+    def _day_production(self, view: L.LearningData, group: str, days: Mapping[str, Any]) -> dict[str, float | None]:
+        production = view.d["production"].get(group, {})
+        out: dict[str, float | None] = {}
+        for day in days:
+            values = [production.get(k) for k in L.local_day_hours(day, self.tz)]
+            out[day] = None if any(v is None for v in values) else float(sum(v for v in values if v is not None))
+        return out
+
     @property
     def same_day_state(self) -> str:
         if self.config_problem:
@@ -609,12 +829,17 @@ class LearningHub:
                 settings = dict(self.data.d["settings"])
                 events = list(self.data.d["events"])
                 house = self.data.d["house_ghi"]  # 0.1.36: a measurement, not learned: kept
+                solcast = self.data.d["solcast"]  # 0.1.37: call budget and answers kept, learning cleared
                 self.data = L.LearningData()
                 self.data.d["house_ghi"] = house
+                for key in ("calls", "slots", "retry_at", "failures", "last_error", "last_call", "last_success",
+                            "issues"):
+                    self.data.d["solcast"][key] = solcast[key]
                 self.data.d["created"] = now.isoformat()
                 self.data.d["events"] = events
                 settings["apply"] = False
                 settings["same_day"] = False
+                settings["solcast"] = False
                 self.data.d["settings"] = settings
                 self.signal = None
                 self.signal_time = None
@@ -915,6 +1140,9 @@ class LearningHub:
             report["signal"] = self.signal.as_dict() if self.signal is not None else None
             self.last_same_day = {**report, "signal_time": now if self.signal is not None else None}
             await self._run_house_ghi(now)
+            solcast_report: dict[str, Any] = {"started": now.isoformat()}
+            await self._step(solcast_report, "solcast", self._async_solcast_call(now))
+            self.last_solcast = solcast_report
         self._notify()
 
     async def async_run_house_ghi(self, now: datetime | None = None) -> None:
@@ -1403,6 +1631,7 @@ class LearningHub:
             else:
                 report["stage2"] = "frozen"
             await self._step(report, "same_day", self._async_same_day_nightly(now))
+            await self._step(report, "solcast", self._async_solcast_nightly(now))
             gate = await self.hass.async_add_executor_job(
                 L.evaluate_gate, self.data.view(), self.groups, now, self.tz
             )
@@ -1600,6 +1829,8 @@ def _build_and_write_export(
     h_rows, h_header, hd_rows, hd_header = HG.export_rows(data.d["house_ghi"], tz)
     files["house_ghi.csv"] = L._csv(h_rows, h_header)
     files["house_ghi_days.csv"] = L._csv(hd_rows, hd_header)
+    for name, (rows, header) in SC.export_rows(data.d["solcast"]).items():
+        files[name] = L._csv(rows, header)
     files["events.csv"] = L.export_events_csv(data)
     settings = L.export_settings(data, groups, tz, latitude, longitude)
     settings["exported"] = now.isoformat()

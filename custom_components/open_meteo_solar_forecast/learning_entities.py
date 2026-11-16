@@ -27,6 +27,7 @@ from homeassistant.util import slugify
 from . import house_ghi as HG
 from . import learning as L
 from . import same_day as SD
+from . import solcast as SC
 from .const import ATTR_LEARNING_HOURS, DOMAIN
 from .learning_hub import LearningHub
 
@@ -289,6 +290,52 @@ def _coverage_attributes(hub: LearningHub, _group: str | None) -> dict[str, Any]
     }
 
 
+def _solcast_section(hub: LearningHub) -> dict[str, Any]:
+    section: dict[str, Any] = hub.data.d["solcast"]
+    return section
+
+
+def _solcast_attributes(hub: LearningHub, _group: str | None) -> dict[str, Any]:
+    """0.1.37: what the combination learned and how the calls go (never the key)."""
+    section = _solcast_section(hub)
+    blend = section.get("blend") or {}
+    now = dt_util.utcnow()
+    options = hub.solcast_options
+    latest = SC.latest_issue(section, now)
+    return {
+        "switch": hub.data.solcast_switch,
+        "served": hub.blend_applies,
+        "weights": blend.get("weights"),
+        "lead_buckets_h": [f"{a}-{b}" for a, b in zip(SC.BUCKETS_H, SC.BUCKETS_H[1:])],
+        "factor_w_m2_per_kw": blend.get("c"),
+        "learned_hours": blend.get("hours"),
+        "computed": blend.get("computed"),
+        "calls_today": SC.calls_today(section, now),
+        "daily_limit": None if options is None else options[2],
+        "last_call": section.get("last_call"),
+        "last_success": section.get("last_success"),
+        "latest_forecast": None if latest is None else L.key_to_dt(latest[0]).isoformat(),
+        "failures_in_a_row": section.get("failures"),
+        "last_error": section.get("last_error"),
+    }
+
+
+def _solcast_improvement(hub: LearningHub, _group: str | None) -> float | None:
+    value = (_solcast_section(hub).get("gate") or {}).get("improvement")
+    return None if value is None else round(value * 100, 1)
+
+
+def _solcast_gate_attributes(hub: LearningHub, _group: str | None) -> dict[str, Any]:
+    gate = dict(_solcast_section(hub).get("gate") or {})
+    gate["required_improvement_percent"] = L.GATE_MIN_IMPROVEMENT * 100
+    gate["required_days"] = SC.GATE_MIN_DAYS
+    gate["required_better_recent"] = f"{SC.GATE_RECENT_BETTER} of {SC.GATE_RECENT}"
+    return gate
+
+
+SOLCAST_STATES = ["not_configured", "collecting", "shadow", "eligible", "applied", "paused"]
+
+
 SENSORS: tuple[HubSensorDescription, ...] = (
     HubSensorDescription(
         key="state", translation_key="state", device_class=SensorDeviceClass.ENUM,
@@ -348,6 +395,15 @@ SENSORS: tuple[HubSensorDescription, ...] = (
         key="same_day_improvement", translation_key="same_day_improvement",
         state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement=PERCENTAGE,
         value=_same_day_improvement, attributes=_same_day_gate_attributes,
+    ),
+    HubSensorDescription(
+        key="solcast_blend", translation_key="solcast_blend", device_class=SensorDeviceClass.ENUM,
+        options=SOLCAST_STATES, value=lambda hub, _g: hub.solcast_state, attributes=_solcast_attributes,
+    ),
+    HubSensorDescription(
+        key="solcast_improvement", translation_key="solcast_improvement",
+        state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement=PERCENTAGE,
+        value=_solcast_improvement, attributes=_solcast_gate_attributes,
     ),
     HubSensorDescription(
         key="cautious_coverage", translation_key="cautious_coverage",
@@ -469,6 +525,31 @@ class FreezeLearningSwitch(HubEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.hub.async_set_frozen(False)
 
+
+
+class SolcastSwitch(HubEntity, SwitchEntity):
+    """Owner's authority over the Solcast combination (0.1.37): it acts
+    only when this is on AND its own check has passed."""
+
+    platform_domain = "switch"
+
+    def __init__(self, hub: LearningHub) -> None:
+        super().__init__(hub, "solcast_switch")
+
+    @property
+    def is_on(self) -> bool:
+        return self.hub.data.solcast_switch
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"state": self.hub.solcast_state,
+                "changed": self.hub.data.d["settings"].get("solcast_changed")}
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.hub.async_set_solcast(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.hub.async_set_solcast(False)
 
 
 class SameDaySwitch(HubEntity, SwitchEntity):

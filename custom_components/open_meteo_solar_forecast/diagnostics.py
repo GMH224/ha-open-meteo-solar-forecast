@@ -18,6 +18,8 @@ TO_REDACT = {
     CONF_API_KEY,
     CONF_LATITUDE,
     CONF_LONGITUDE,
+    "solcast_api_key",  # 0.1.37
+    "solcast_site_id",
 }
 
 
@@ -77,6 +79,27 @@ def _same_day_today(hub: Any) -> dict[str, Any] | None:
     return {"day": day, "bands": len(record["bands"]), "decisions": record["decisions"]}
 
 
+def _solcast(hub: Any) -> dict[str, Any]:
+    """0.1.37: state, learned combination, check and calls (never the key or site id)."""
+    section = hub.data.d["solcast"]
+    return {
+        "state": hub.solcast_state,
+        "configured": hub.solcast_options is not None,
+        "served": hub.blend_applies,
+        "blend": section.get("blend"),
+        "gate": section.get("gate"),
+        "gate_history": section.get("gate_history", [])[-14:],
+        "calls": section.get("calls"),
+        "slots": section.get("slots"),
+        "retry_at": section.get("retry_at"),
+        "failures": section.get("failures"),
+        "last_error": section.get("last_error"),
+        "last_call": section.get("last_call"),
+        "last_success": section.get("last_success"),
+        "last_run": hub.last_solcast,
+    }
+
+
 def _house_ghi(hub: Any) -> dict[str, Any]:
     """0.1.36: the sensor's attributes, today's windows and the version
     history (all windows are in the export)."""
@@ -98,13 +121,14 @@ def _hub_diagnostics(hub: Any, entry: ConfigEntry) -> dict[str, Any]:
     """0.1.34: everything the learner decides with, except raw hour data
     (that is in the export folder). No paths, no coordinates."""
     if hub is None:
-        return {"entry": {"title": entry.title, "options": dict(entry.options)}, "hub": "not loaded"}
+        return {"entry": {"title": entry.title, "options": async_redact_data(entry.options, TO_REDACT)},
+                "hub": "not loaded"}
     d = hub.data.d
     statuses: dict[str, int] = {}
     for item in d["days"].values():
         statuses[item["status"]] = statuses.get(item["status"], 0) + 1
     return {
-        "entry": {"title": entry.title, "options": dict(entry.options)},
+        "entry": {"title": entry.title, "options": async_redact_data(entry.options, TO_REDACT)},
         "state": d["state"],
         "applies": hub.applies,
         "settings": d["settings"],
@@ -130,6 +154,9 @@ def _hub_diagnostics(hub: Any, entry: ConfigEntry) -> dict[str, Any]:
             "counter_readings": {g: len(s) for g, s in hub.counters.items()},
             "same_day_days": len(d["same_day"]["days"]),
             "house_ghi_windows": len(d["house_ghi"]["windows"]),
+            "solcast_issues": len(d["solcast"]["issues"]),
+            "solcast_pairs": len(d["solcast"]["pairs"]),
+            "solcast_decision_days": len(d["solcast"]["decisions"]),
         },
         "evidence": hub.evidence_info,
         "gate": d["gate"],
@@ -153,6 +180,7 @@ def _hub_diagnostics(hub: Any, entry: ConfigEntry) -> dict[str, Any]:
             "today": _same_day_today(hub),
         },
         "house_ghi": _house_ghi(hub),
+        "solcast": _solcast(hub),
         "events": d["events"],
     }
 

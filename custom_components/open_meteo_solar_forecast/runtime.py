@@ -51,6 +51,7 @@ class LearningReport(TypedDict, total=False):
     tomorrow_raw_wh: float | None
     tomorrow_corrected_wh: float | None
     same_day: dict[str, Any] | None
+    solcast: dict[str, Any] | None
 
 
 class EntryReport(TypedDict):

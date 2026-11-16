@@ -555,12 +555,18 @@ def predictors_from_row(key: int, row: list[Any]) -> Predictors:
 # --------------------------------------------------------------------------
 
 
+def _new_solcast() -> dict[str, Any]:
+    from .solcast import new_section  # pure; late import avoids a cycle
+
+    return new_section()
+
+
 def _new_data() -> dict[str, Any]:
     return {
         "schema": STORE_SCHEMA_VERSION,
         "algorithm": ALGORITHM_VERSION,
         "created": None,
-        "settings": {"apply": False, "apply_changed": None, "same_day": False},
+        "settings": {"apply": False, "apply_changed": None, "same_day": False, "solcast": False},
         "freeze": [],  # [[start_ts, end_ts|None], ...]
         "resets": [],  # [[ts, "stage1"|"stage2"], ...]: evidence decided earlier is ignored
         "station_samples": {},  # end_ts -> [ghi, dhi, sun, lw, refl, temp]
@@ -584,6 +590,7 @@ def _new_data() -> dict[str, Any]:
         "purged_before": None,  # newest retention limit applied (epoch s)
         "same_day": {"days": {}, "table": None, "gate": None, "gate_history": []},  # 0.1.35
         "house_ghi": {"windows": {}, "version_history": []},  # 0.1.36: measured light at the house
+        "solcast": _new_solcast(),  # 0.1.37: Solcast as a second light forecast
     }
 
 
@@ -692,6 +699,7 @@ class LearningData:
         _require(isinstance(settings, dict) and isinstance(settings.get("apply"), bool), "settings")
         settings.setdefault("same_day", False)
         _require(isinstance(settings.get("same_day"), bool), "settings same_day")
+        _require(isinstance(settings.get("solcast", False), bool), "settings solcast")
         from .same_day import SameDayDataError, validate_section  # pure; late import avoids a cycle
 
         try:
@@ -703,6 +711,12 @@ class LearningData:
         try:
             data["house_ghi"] = validate_house(data["house_ghi"])
         except HouseGhiDataError as err:
+            raise LearningDataError(str(err)) from err
+        from .solcast import SolcastDataError, validate_section as validate_solcast  # pure; late import
+
+        try:
+            data["solcast"] = validate_solcast(data["solcast"])
+        except SolcastDataError as err:
             raise LearningDataError(str(err)) from err
         _require(isinstance(data["freeze"], list), "freeze")
         for interval in data["freeze"]:
@@ -833,6 +847,9 @@ class LearningData:
         house = self.d["house_ghi"]
         d["house_ghi"] = {"windows": dict(house["windows"]),
                           "version_history": [list(item) for item in house["version_history"]]}
+        from .solcast import copy_section  # pure; late import
+
+        d["solcast"] = copy_section(self.d["solcast"])
         return LearningData(d)
 
     # -- events ------------------------------------------------------------
@@ -860,6 +877,20 @@ class LearningData:
     @property
     def same_day_switch(self) -> bool:
         return bool(self.d["settings"].get("same_day", False))
+
+    @property
+    def solcast_switch(self) -> bool:
+        return bool(self.d["settings"].get("solcast", False))
+
+    def set_solcast(self, value: bool, now: datetime) -> bool:
+        """0.1.37: the owner's switch for the Solcast combination."""
+        if self.solcast_switch == value:
+            return False
+        self.d["settings"]["solcast"] = value
+        self.d["settings"]["solcast_changed"] = now.astimezone(timezone.utc).isoformat()
+        self.event(now, "solcast_on" if value else "solcast_off",
+                   "owner switched the Solcast combination " + ("on" if value else "off"))
+        return True
 
     def set_same_day(self, value: bool, now: datetime) -> bool:
         if self.same_day_switch == value:
@@ -1820,6 +1851,31 @@ def export_settings(data: LearningData, groups: Iterable[GroupInfo], tz: tzinfo,
         "representativeness": data.d["representativeness"],
         "same_day": _same_day_settings(data),
         "house_ghi": _house_ghi_settings(data),
+        "solcast": _solcast_settings(data),
+    }
+
+
+def _solcast_settings(data: LearningData) -> dict[str, Any]:
+    """0.1.37: learned state and rules of the Solcast combination (never the key)."""
+    from . import solcast as SC  # pure; late import avoids a cycle
+
+    section = data.d["solcast"]
+    return {
+        "switch": data.solcast_switch,
+        "blend": section["blend"],
+        "gate": section["gate"],
+        "calls": section["calls"],
+        "failures": section["failures"],
+        "last_error": section["last_error"],
+        "parameters": {
+            "slots_local": list(SC.SLOT_TIMES_LOCAL) + [f"sunrise+{SC.SUNRISE_SLOT_MIN}min"],
+            "reserve_calls": SC.RESERVE_CALLS,
+            "c_prior_w_m2_per_kw": SC.C_PRIOR,
+            "buckets_h": list(SC.BUCKETS_H),
+            "w_prior_hours": SC.W_PRIOR_HOURS,
+            "gate": {"min_days": SC.GATE_MIN_DAYS, "min_improvement": GATE_MIN_IMPROVEMENT,
+                     "recent_better": [SC.GATE_RECENT_BETTER, SC.GATE_RECENT]},
+        },
     }
 
 

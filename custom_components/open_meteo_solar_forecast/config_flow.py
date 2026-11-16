@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +23,8 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
     TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
 )
 
 from .const import (
@@ -29,6 +33,9 @@ from .const import (
     CONF_GROUP_MEMBERS,
     CONF_GROUP_NAME,
     CONF_GROUPS,
+    CONF_SOLCAST_API_KEY,
+    CONF_SOLCAST_API_LIMIT,
+    CONF_SOLCAST_SITE_ID,
     CONF_STATION_ENTITY,
     DEFAULT_STATION_ENTITY,
     ENTRY_TYPE_LEARNING_HUB,
@@ -453,13 +460,47 @@ def _normalize_group(user_input: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+SOLCAST_SITE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{6,62}[A-Za-z0-9]$")
+
+
+def _solcast_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """0.1.37: optional Solcast flat reference site (empty key = off)."""
+    return vol.Schema(
+        {
+            vol.Optional(CONF_SOLCAST_API_KEY, default=defaults.get(CONF_SOLCAST_API_KEY) or ""): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            ),
+            vol.Optional(CONF_SOLCAST_SITE_ID, default=defaults.get(CONF_SOLCAST_SITE_ID) or ""): TextSelector(),
+            vol.Optional(CONF_SOLCAST_API_LIMIT, default=int(defaults.get(CONF_SOLCAST_API_LIMIT) or 10)): NumberSelector(
+                NumberSelectorConfig(min=1, max=50, step=1, mode=NumberSelectorMode.BOX)
+            ),
+        }
+    )
+
+
+def _normalize_solcast(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    key = str(user_input.get(CONF_SOLCAST_API_KEY) or "").strip()
+    site = str(user_input.get(CONF_SOLCAST_SITE_ID) or "").strip()
+    limit = int(user_input.get(CONF_SOLCAST_API_LIMIT) or 10)
+    errors: dict[str, str] = {}
+    if not key:  # Solcast off; the other fields do not matter
+        return {}, errors
+    if not site:
+        errors[CONF_SOLCAST_SITE_ID] = "solcast_site_required"
+    elif not SOLCAST_SITE_PATTERN.match(site):
+        errors[CONF_SOLCAST_SITE_ID] = "solcast_site_invalid"
+    return {CONF_SOLCAST_API_KEY: key, CONF_SOLCAST_SITE_ID: site, CONF_SOLCAST_API_LIMIT: limit}, errors
+
+
 class _HubSteps:
-    """Station page + one page per inverter group; shared by the config
-    flow and the hub's options flow."""
+    """Station page + one page per inverter group + the optional Solcast
+    page (0.1.37); shared by the config flow and the hub's options flow."""
 
     _station: str | None
     _groups: list[dict[str, Any]]
     _stored_groups: list[dict[str, Any]]
+    _solcast: dict[str, Any]
+    _stored_solcast: dict[str, Any]
 
     if TYPE_CHECKING:  # provided by ConfigFlow / OptionsFlow and the subclass
         hass: HomeAssistant
@@ -502,7 +543,7 @@ class _HubSteps:
                     self._groups.pop()
                     errors[CONF_GROUP_MEMBERS] = problem
                 else:
-                    return self._finish_hub()
+                    return await self.async_step_hub_solcast()
         index = len(self._groups)
         if user_input is not None and errors:
             defaults = _normalize_group(user_input)
@@ -518,6 +559,17 @@ class _HubSteps:
             description_placeholders={"group_number": str(index + 1)},
             errors=errors,
         )
+
+
+    async def async_step_hub_solcast(self, user_input: dict[str, Any] | None = None):
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            solcast, errors = _normalize_solcast(user_input)
+            if not errors:
+                self._solcast = solcast
+                return self._finish_hub()
+        defaults = user_input if user_input is not None else getattr(self, "_stored_solcast", {})
+        return self.async_show_form(step_id="hub_solcast", data_schema=_solcast_schema(defaults or {}), errors=errors)
 
 
 class OpenMeteoSolarForecastFlowHandler(_HubSteps, ConfigFlow, domain=DOMAIN):
@@ -617,7 +669,8 @@ class OpenMeteoSolarForecastFlowHandler(_HubSteps, ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=HUB_TITLE,
             data={CONF_ENTRY_TYPE: ENTRY_TYPE_LEARNING_HUB},
-            options={CONF_STATION_ENTITY: self._station, CONF_GROUPS: self._groups},
+            options={CONF_STATION_ENTITY: self._station, CONF_GROUPS: self._groups,
+                     **getattr(self, "_solcast", {})},
         )
 
     async def async_step_local(
@@ -710,11 +763,14 @@ class OpenMeteoSolarForecastOptionFlowHandler(_HubSteps, OptionsFlow):
         """0.1.34: hub options, page 1."""
         options = self.config_entry.options
         self._stored_groups = [dict(g) for g in options.get(CONF_GROUPS) or []]
+        self._stored_solcast = {k: options[k] for k in (CONF_SOLCAST_API_KEY, CONF_SOLCAST_SITE_ID,
+                                                         CONF_SOLCAST_API_LIMIT) if k in options}
         return await self._hub_station_step("hub_station", user_input, options.get(CONF_STATION_ENTITY))
 
     def _finish_hub(self) -> ConfigFlowResult:
         return self.async_create_entry(
-            title="", data={CONF_STATION_ENTITY: self._station, CONF_GROUPS: self._groups}
+            title="", data={CONF_STATION_ENTITY: self._station, CONF_GROUPS: self._groups,
+                            **getattr(self, "_solcast", {})}
         )
 
     async def async_step_init(

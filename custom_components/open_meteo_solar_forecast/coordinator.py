@@ -760,6 +760,11 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
         base_estimate, base_stats, base_shading = (
             (estimate_corr, corr_stats, corr_shading) if applies else (raw, raw_stats, raw_shading)
         )
+        # 0.1.37: Solcast combined by its learned weight (always computed; served only when the hub says so)
+        blend = await self._async_blend(hub, base_snapshot, base_estimate, base_stats, base_shading, complete, now)
+        if blend["estimate"] is not None and blend["snapshot"] is not None and hub.blend_applies:
+            base_snapshot, base_estimate = blend["snapshot"], blend["estimate"]
+            base_stats, base_shading = blend["stats"], blend["shading"]
         served, served_stats, served_shading = base_estimate, base_stats, base_shading
         same_day = await self._async_same_day(hub, base_snapshot, base_estimate, now)
         self.cautious_estimate = same_day["cautious"]
@@ -775,10 +780,51 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             tomorrow_raw_wh=raw_days.get(tomorrow),
             tomorrow_corrected_wh=corr_days.get(tomorrow),
             same_day=same_day["report"],
+            solcast=blend["report"],
         )
         self.local_forecast.shading_stats = served_shading
         self.last_local_stats = served_stats
         return served
+
+    async def _async_blend(
+        self, hub: Any, base_snapshot: LocalSnapshot, base_estimate: Estimate, base_stats: list[Any],
+        base_shading: Any, complete: set[date] | None, now: datetime,
+    ) -> dict[str, Any]:
+        """Solcast combination (0.1.37) of the forecast that would be served
+        without it. Any failure leaves the forecast as it was."""
+        result: dict[str, Any] = {"estimate": None, "stats": None, "shading": None, "snapshot": None, "report": None}
+        if self.local_forecast is None or self.config_entry is None:
+            return result
+        today = dt_util.as_local(now).date()
+        try:
+            async with asyncio.timeout(LEARNING_TIMEOUT_SECONDS):
+                hours, info = await hub.async_blend_plan(self.config_entry.entry_id, base_snapshot.hours, now)
+                if hours is None:
+                    result["report"] = info
+                    return result
+                if info.get("hours_changed"):
+                    snapshot = replace(base_snapshot, hours=hours)
+                    self.local_forecast.prepare(self.hass, snapshot)
+                    result["estimate"] = await self.local_forecast.estimate()
+                    result["stats"] = list(self.local_forecast.local_stats or [])
+                    result["shading"] = self.local_forecast.shading_stats
+                    result["snapshot"] = snapshot
+                else:  # nothing to combine: identical to the forecast without Solcast
+                    result.update(estimate=base_estimate, stats=base_stats, shading=base_shading,
+                                  snapshot=base_snapshot)
+            hub.report_blend(self.config_entry.entry_id, _day_totals(base_estimate),
+                             _day_totals(result["estimate"]), complete, now)
+        except Exception as err:  # noqa: BLE001 - fail-safe: forecast unchanged
+            LOGGER.warning("Solcast combination failed, forecast unchanged: %s", sanitize_error(err))
+            return {"estimate": None, "stats": None, "shading": None, "snapshot": None,
+                    "report": {"served": False, "error": f"{type(err).__name__}: {sanitize_error(err)}"}}
+        result["report"] = {
+            **info,
+            "served": hub.blend_applies,
+            "today_without_wh": _day_totals(base_estimate).get(today),
+            "today_with_wh": _day_totals(result["estimate"]).get(today),
+        }
+        return result
 
     async def _async_same_day(
         self, hub: Any, base_snapshot: LocalSnapshot, base_estimate: Estimate, now: datetime

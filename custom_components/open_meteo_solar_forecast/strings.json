@@ -93,6 +93,20 @@
           "energy_entity": "Total energy produced (kWh/Wh, state class total or total_increasing), e.g. the inverter's DC input energy. Read from long-term statistics.",
           "name": "Short name, e.g. 10K. Used in entity names."
         }
+      },
+      "hub_solcast": {
+        "title": "Learning hub: Solcast (optional)",
+        "description": "A free Solcast hobbyist rooftop site that lies flat (tilt 0°, 1 kW DC and AC, efficiency 100 %) gives a second light forecast. The hub calls it itself (at most the daily limit, one call kept in reserve) and combines it by a learned weight that starts at zero; it acts only after its own check and with its switch on. Leave the key empty to turn Solcast off.",
+        "data": {
+          "solcast_api_key": "Solcast API key",
+          "solcast_site_id": "Solcast rooftop site ID (the flat site)",
+          "solcast_api_limit": "Daily request limit"
+        },
+        "data_description": {
+          "solcast_api_key": "From the account menu of the Solcast toolkit. Stored in Home Assistant's configuration, never exported.",
+          "solcast_site_id": "Resource ID of the flat site, e.g. abcd-1234-ef56-7890.",
+          "solcast_api_limit": "10 for new hobbyist accounts. The hub plans one call fewer and keeps one for a retry."
+        }
       }
     },
     "error": {
@@ -110,7 +124,9 @@
       "member_twice": "An entry can belong to one group only.",
       "member_source_mismatch": "All member entries must use the same weather entity and irradiance sensor.",
       "group_name_invalid": "Enter a name of 1 to 32 characters.",
-      "group_name_duplicate": "This group name is already used."
+      "group_name_duplicate": "This group name is already used.",
+      "solcast_site_required": "Enter the site ID of the flat Solcast site",
+      "solcast_site_invalid": "This does not look like a Solcast site ID"
     },
     "abort": {
       "already_configured": "The learning hub is already set up."
@@ -133,7 +149,9 @@
       "member_twice": "An entry can belong to one group only.",
       "member_source_mismatch": "All member entries must use the same weather entity and irradiance sensor.",
       "group_name_invalid": "Enter a name of 1 to 32 characters.",
-      "group_name_duplicate": "This group name is already used."
+      "group_name_duplicate": "This group name is already used.",
+      "solcast_site_required": "Enter the site ID of the flat Solcast site",
+      "solcast_site_invalid": "This does not look like a Solcast site ID"
     },
     "step": {
       "init": {
@@ -222,6 +240,20 @@
         "data_description": {
           "energy_entity": "[%key:component::open_meteo_solar_forecast::config::step::hub_group::data_description::energy_entity%]",
           "name": "[%key:component::open_meteo_solar_forecast::config::step::hub_group::data_description::name%]"
+        }
+      },
+      "hub_solcast": {
+        "title": "Learning hub: Solcast (optional)",
+        "description": "A free Solcast hobbyist rooftop site that lies flat (tilt 0°, 1 kW DC and AC, efficiency 100 %) gives a second light forecast. The hub calls it itself (at most the daily limit, one call kept in reserve) and combines it by a learned weight that starts at zero; it acts only after its own check and with its switch on. Leave the key empty to turn Solcast off.",
+        "data": {
+          "solcast_api_key": "Solcast API key",
+          "solcast_site_id": "Solcast rooftop site ID (the flat site)",
+          "solcast_api_limit": "Daily request limit"
+        },
+        "data_description": {
+          "solcast_api_key": "From the account menu of the Solcast toolkit. Stored in Home Assistant's configuration, never exported.",
+          "solcast_site_id": "Resource ID of the flat site, e.g. abcd-1234-ef56-7890.",
+          "solcast_api_limit": "10 for new hobbyist accounts. The hub plans one call fewer and keeps one for a retry."
         }
       }
     }
@@ -364,6 +396,20 @@
       },
       "cautious_coverage": {
         "name": "Cautious coverage"
+      },
+      "solcast_blend": {
+        "name": "Solcast combination",
+        "state": {
+          "not_configured": "Not configured",
+          "collecting": "Collecting evidence",
+          "shadow": "Shadow (computed, not applied)",
+          "eligible": "Eligible (switch off)",
+          "applied": "Applied",
+          "paused": "Paused"
+        }
+      },
+      "solcast_improvement": {
+        "name": "Solcast improvement"
       }
     },
     "switch": {
@@ -375,6 +421,9 @@
       },
       "same_day_switch": {
         "name": "Same-day correction"
+      },
+      "solcast_switch": {
+        "name": "Solcast combination"
       }
     }
   },
