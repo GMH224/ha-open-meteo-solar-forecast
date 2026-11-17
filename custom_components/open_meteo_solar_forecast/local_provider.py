@@ -17,6 +17,7 @@ Nothing here talks to the internet. See OMSF_v0_1_33_2_Architecture_ICS.md.
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -50,6 +51,7 @@ from .local_source import (
     floor_hour,
     merge_history,
     parse_irradiance_series,
+    SNOW_DEPTH_MAX_M,
     parse_snow_depth,
     parse_temperature_forecast,
     series_dni_consistency,
@@ -60,6 +62,7 @@ HISTORY_STORAGE_VERSION = 1
 SERVICE_TIMEOUT_SECONDS = 20  # below the coordinator's 60 s bound
 HISTORY_LOAD_ATTEMPTS = 3  # OMSF-013: retry a failed store read, bounded
 SNOW_HOLD = timedelta(hours=24)  # OMSF-005: last valid snow depth kept this long
+SNOW_CLOCK_SLACK = timedelta(minutes=5)  # ICS-06: a stored time this far ahead is rejected
 
 
 class LocalDataError(HomeAssistantError):
@@ -266,12 +269,37 @@ class LocalWeatherReader:
         except (AttributeError, KeyError, TypeError, ValueError) as err:
             LOGGER.warning("Discarding malformed local history: %s", err)
             self._hours, self._temps = {}, {}
+        self._snow_last_valid = self._restore_snow(
+            stored.get("snow") if isinstance(stored, dict) else None, dt_util.utcnow())
+
+    def _restore_snow(self, raw: Any, now: datetime) -> tuple[datetime, float] | None:
+        """ICS-06 (0.1.37.1): the last valid snow depth survives a restart, so
+        the 24 h hold still counts from the original reading. Only kept for the
+        same sensor, with a time zone, not in the future and in range."""
+        if raw is None:
+            return None
+        try:
+            if raw["entity_id"] != self.snow_depth_entity_id or not self.snow_depth_entity_id:
+                return None
+            moment = datetime.fromisoformat(raw["time"])
+            depth = raw["depth_m"]
+            if (moment.utcoffset() is None or moment > now + SNOW_CLOCK_SLACK
+                    or isinstance(depth, bool) or not isinstance(depth, (int, float))
+                    or not math.isfinite(depth) or not 0.0 <= depth <= SNOW_DEPTH_MAX_M):
+                raise ValueError("snow hold out of range")
+        except (KeyError, TypeError, ValueError) as err:
+            LOGGER.debug("Ignoring stored snow depth: %s", err)
+            return None
+        return moment.astimezone(timezone.utc), float(depth)
 
     def _schedule_save(self) -> None:
-        data = {
+        data: dict[str, Any] = {
             "hours": [rec.to_json() for rec in self._hours.values()],
             "temperatures": {key.isoformat(): value for key, value in self._temps.items()},
         }
+        if self._snow_last_valid is not None:
+            held_at, depth = self._snow_last_valid
+            data["snow"] = {"entity_id": self.snow_depth_entity_id, "time": held_at.isoformat(), "depth_m": depth}
         self._store.async_delay_save(lambda: data, 30)
 
     async def async_remove(self) -> None:

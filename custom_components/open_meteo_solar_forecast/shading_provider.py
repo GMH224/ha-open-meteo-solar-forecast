@@ -1,8 +1,9 @@
 """Home Assistant glue for partial shading (0.1.33.5).
 
 * reads shading files (size-bounded, executor), with a process-wide cache
-  keyed by path, size, modification time and content digest, so a reload
-  does not ray-trace a geometry again;
+  keyed by path and content digest (ICS-07, 0.1.37.1: the file is always
+  read, so a change that keeps size and time is seen), so a reload does not
+  parse or ray-trace an unchanged file again;
 * reports problems as repair issues and keeps the forecast running without
   shading for that array (a faulty shading file never stops the forecast);
 * ``ShadingMixin`` applies the tables to the per-array responses of both the
@@ -12,6 +13,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from dataclasses import dataclass, field
@@ -33,8 +35,8 @@ from .shading import (
 
 LOGGER = logging.getLogger(__name__)
 
-# path -> (size, mtime_ns, table); bounded so a changing path list cannot grow it
-_CACHE: dict[str, tuple[int, int, ShadingTable]] = {}
+# path -> (SHA-256 of the text, table); bounded so a changing path list cannot grow it
+_CACHE: dict[str, tuple[str, ShadingTable]] = {}
 _CACHE_MAX = 32
 
 
@@ -74,18 +76,20 @@ def read_shading_file(path: str) -> ShadingTable:
         raise ShadingError(f"cannot be read ({type(err).__name__})") from None
     if stat.st_size > SHADING_FILE_MAX_BYTES:
         raise ShadingError(f"file is {stat.st_size} bytes, limit {SHADING_FILE_MAX_BYTES}")
-    cached = _CACHE.get(path)
-    if cached is not None and cached[0] == stat.st_size and cached[1] == stat.st_mtime_ns:
-        return cached[2]
     try:
         with open(path, encoding="utf-8") as handle:
             text = handle.read(SHADING_FILE_MAX_BYTES + 1)
     except (OSError, UnicodeDecodeError) as err:
         raise ShadingError(f"cannot be read ({type(err).__name__})") from None
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    cached = _CACHE.get(path)
+    if cached is not None and cached[0] == digest:
+        return cached[1]
     table = load_shading_text(text, path)
+    _CACHE.pop(path, None)
     if len(_CACHE) >= _CACHE_MAX:
         _CACHE.pop(next(iter(_CACHE)))
-    _CACHE[path] = (stat.st_size, stat.st_mtime_ns, table)
+    _CACHE[path] = (digest, table)
     return table
 
 

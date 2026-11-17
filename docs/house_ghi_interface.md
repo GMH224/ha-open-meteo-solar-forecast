@@ -1,7 +1,7 @@
 # Interface: measured light at the house (`house_ghi`)
 
 **Provider:** Open-Meteo Solar Forecast (GMH224 fork), learning hub, from 0.1.36.0
-**Interface version:** 1 (attribute `version`)
+**Interface version:** 2 (attribute `version`; 2 from 0.1.37.1, see section 5)
 **Audience:** consumers of a local irradiance sensor, e.g. SwissWeather Fusion ("local irradiance sensor (W/m²)")
 
 ## 1. What it is
@@ -62,7 +62,7 @@ attributes:
     - ["2026-11-16T07:15:00+00:00", null, "bad"]
     - ["2026-11-16T07:30:00+00:00", 41.2, "uncertain"]
     - ["2026-11-16T09:00:00+00:00", 142.3, "good"]
-  version: 1
+  version: 2
   windows_today: 9
   bad_counts_today: {counter: 0, startup: 2, low_sun: 1, snow: 0, clipping: 0, curtailment: 0}
   uncertain_counts_today: {clipping: 0, low_sun: 4, temperature: 0, saturated: 0, resolution: 0, mixed_sky: 1}
@@ -98,9 +98,12 @@ The first matching rule decides; *bad* rules are checked before *uncertain* ones
   cloud, temperature), no learned forecast correction, no calibration factor and no same-day correction enters
   the value. The value may therefore be used to learn a forecast's errors.
 - **Fixed references.** Clear-sky model (Haurwitz), PV model input and the quality rules are fixed per `version`.
-  Every change raises `version`; the provider records each version with its start date (export, section 6). A
-  planned change: learning the house's low-sun losses (expected early 2027, version 2), which will narrow the
-  `low_sun` rules.
+  Every change raises `version`; the provider records each version with its start date (export, section 6).
+  - Version 1 (0.1.36.0): first version.
+  - Version 2 (0.1.37.1): the `clipping` rule uses the inverter limits the PV forecast uses (per array when set,
+    otherwise the shared limit). With a shared inverter limit, values and qualities are identical to version 1.
+  - Planned: learning the house's low-sun losses (expected early 2027, version 3), which will narrow the
+    `low_sun` rules.
 
 ## 6. History
 

@@ -467,8 +467,10 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             return None
 
         try:
-            last_update = stored["last_successful_update"]
-            if dt_util.parse_datetime(str(last_update)) is None:
+            last_update = dt_util.parse_datetime(str(stored["last_successful_update"]))
+            # ICS-05 (0.1.37.1): only a time with its zone can be compared
+            # with the clock; anything else discards the retained forecast.
+            if last_update is None or last_update.utcoffset() is None:
                 raise ValueError("invalid last_successful_update")
             estimate = Estimate(
                 watts=_datetime_dict_from_json(stored["watts"]),
@@ -484,7 +486,7 @@ class OpenMeteoSolarForecastDataUpdateCoordinator(DataUpdateCoordinator[Estimate
             LOGGER.warning("Discarding malformed retained forecast data")
             return None
 
-        self._last_successful_update = dt_util.parse_datetime(last_update)
+        self._last_successful_update = last_update
         if self.uses_local:
             # Absent key: the retained forecast came from the Open-Meteo
             # fallback, so nothing is masked (D-07). Malformed: mask all.

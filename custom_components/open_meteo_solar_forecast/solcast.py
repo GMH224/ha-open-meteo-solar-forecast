@@ -655,8 +655,8 @@ def _validate(raw: Any) -> dict[str, Any]:
         if not C_MIN <= blend["c"] <= C_MAX or len(blend["weights"]) != len(BUCKETS_H) - 1 or not all(
                 _num(w) and 0.0 <= w <= 1.0 for w in blend["weights"]):
             raise SolcastDataError("solcast weights")
-    if out["gate"] is not None and (not isinstance(out["gate"], dict) or not isinstance(out["gate"].get("passed"), bool)):
-        raise SolcastDataError("solcast gate")
+    # The check result ("gate") is validated with the other checks in
+    # learning.LearningData (ICS-04, 0.1.37.1): a malformed one is dropped.
     if not isinstance(out["gate_history"], list):
         raise SolcastDataError("solcast gate history")
     return out

@@ -658,6 +658,32 @@ def _finite_list(value: Any, length: int, name: str, allow_none: bool = True) ->
     return checked
 
 
+def gate_problem(gate: Any) -> str | None:
+    """Why a stored check result cannot be used, or None (ICS-04, 0.1.37.1).
+
+    Every field the integration reads back is checked: ``passed`` (bool),
+    ``days`` and ``better_recent`` (counts), ``improvement`` (finite number or
+    None), ``reasons`` (list of text). Other fields are only shown."""
+    if gate is None:
+        return None
+    if not isinstance(gate, dict):
+        return "not a mapping"
+    if not isinstance(gate.get("passed"), bool):
+        return "passed"
+    for name in ("days", "better_recent"):
+        value = gate.get(name, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return name
+    value = gate.get("improvement")
+    if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
+                              or not math.isfinite(value)):
+        return "improvement"
+    reasons = gate.get("reasons", [])
+    if not isinstance(reasons, list) or not all(isinstance(r, str) for r in reasons):
+        return "reasons"
+    return None
+
+
 class LearningData:
     """In-memory learning state with strict (de)serialisation.
 
@@ -670,6 +696,7 @@ class LearningData:
     def __init__(self, raw: dict[str, Any] | None = None) -> None:
         self.d = _new_data() if raw is None else raw
         self.migrated_from: int | None = None
+        self.repaired: list[str] = []  # derived results dropped on load (ICS-04)
 
     # -- (de)serialisation ------------------------------------------------
 
@@ -793,8 +820,25 @@ class LearningData:
                     "stage2 factor out of bounds",
                 )
         _require(data["state"].get("state") in STATES, "state")
+        # ICS-04 (0.1.37.1): a malformed check result is derived data. It is
+        # dropped (the next nightly run evaluates it again; until then the
+        # learning it guards is not applied) instead of breaking a sensor.
+        repaired = []
+        for name, holder in (("stage-1", data), ("same-day", data["same_day"]), ("solcast", data["solcast"])):
+            problem = gate_problem(holder.get("gate"))
+            if problem is not None:
+                holder["gate"] = None
+                repaired.append(f"{name} check ({problem})")
+            history = holder.get("gate_history")
+            if not isinstance(history, list):
+                raise LearningDataError(f"{name} check history")
+            kept = [item for item in history if gate_problem(item) is None]
+            if len(kept) != len(history):
+                holder["gate_history"] = kept
+                repaired.append(f"{name} check history ({len(history) - len(kept)} entries)")
         result = cls(data)
         result.migrated_from = migrated_from
+        result.repaired = repaired
         return result
 
     def to_json(self) -> dict[str, Any]:
@@ -1447,16 +1491,23 @@ def decide_day(
             details["group"] = group.name
             return "production_fault", details
         model = data.d["model"].get(group.name, {})
-        modelled = [model.get(k) for k in daylight]
-        if any(v is None for v in modelled):
+        # ICS-01 (0.1.37.1): the ratio is judged over the daylight hours with
+        # both station light and model. An hour with station light but no
+        # model yet is waited for; an hour without station light has no
+        # model and is left out, as long as 80 % of the daylight is checked.
+        if any(model.get(k) is None for k in complete):
             if may_wait:
                 return None, details
+        checked = [k for k in complete if model.get(k) is not None]
+        if len(checked) < DAY_STATION_COMPLETENESS * len(daylight):
             details.setdefault("ratio_unchecked", []).append(group.name)
             continue
-        model_sum = sum(modelled)
+        if len(checked) < len(daylight):
+            details.setdefault("ratio_hours", {})[group.name] = f"{len(checked)}/{len(daylight)}"
+        model_sum = sum(model[k] for k in checked)
         if model_sum < DAY_RATIO_MIN_MODEL_KWH:
             continue
-        ratio = sum(production[k] for k in daylight) / model_sum
+        ratio = sum(production[k] for k in checked) / model_sum
         details.setdefault("ratio", {})[group.name] = round(ratio, 3)
         if not DAY_RATIO_MIN <= ratio <= DAY_RATIO_MAX:
             return "not_representative", details

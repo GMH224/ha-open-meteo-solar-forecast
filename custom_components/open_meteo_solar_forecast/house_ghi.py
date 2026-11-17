@@ -46,12 +46,15 @@ from .same_day import BAND_S, K_GRID, SIGNAL_AFTER_SUNRISE_S, clear_kt, erbs, in
 # Parameters (specification section in brackets)
 # --------------------------------------------------------------------------
 
-VERSION = 1
+VERSION = 2
 """(5) Raised on every change of the clear-sky model, the PV model input or a
-quality rule; recorded with its date in the store and the export."""
+quality rule; recorded with its date in the store and the export.
+2 (0.1.37.1): the clipping rule uses the inverter limits the forecast uses
+(per array when set); identical values and qualities with a shared limit."""
 VERSION_NOTE = (
     "clear sky Haurwitz (window mean of 5 instants); members' PV model on clear-sky-shaped light "
-    "(Erbs split), station air temperature, no learned factors; quality rules of 0.1.36.0"
+    "(Erbs split), station air temperature, no learned factors; quality rules of 0.1.36.0, clipping "
+    "against the forecast's inverter limits (per array when set) since 0.1.37.1"
 )
 WINDOW_S = BAND_S
 CLEAR_SAMPLES = 5  # (3) instants per window for the clear-sky mean
@@ -203,6 +206,29 @@ def assess(
         reason = "mixed_sky"
     ghi = round(k * clear_ghi, 1)
     return Window(start, ghi, round(k, 4), clear_ghi, GOOD if reason is None else UNCERTAIN, reason, elevation)
+
+
+def _positive_w(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value) if value > 0 else None
+
+
+def effective_ac_limit_w(shared: Any, per_array: Any, array_count: int = 1) -> float | None:
+    """Inverter AC limit of one entry's total output (W), with the same
+    precedence as the forecast (ICS-02, 0.1.37.1): as soon as any array has
+    its own inverter, the shared value is ignored and the arrays' limits add
+    up; an array without its own inverter is not limited, so the entry's total
+    then has no limit (None). Otherwise the shared limit, None = no limit."""
+    if isinstance(per_array, (list, tuple)):
+        values = [_positive_w(v) for v in per_array]
+        if len(values) == 1 and array_count > 1:
+            values = values * array_count
+    else:
+        values = [_positive_w(per_array)] * max(array_count, 1)
+    if any(v is not None for v in values):
+        return None if any(v is None for v in values) else float(sum(v for v in values if v is not None))
+    return _positive_w(shared)
 
 
 def window_kt_clear(start: int, latitude: float, longitude: float) -> float:

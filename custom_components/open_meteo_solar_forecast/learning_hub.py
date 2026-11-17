@@ -58,6 +58,9 @@ from . import learning as L
 from . import same_day as SD
 from . import solcast as SC
 from .const import (
+    CONF_ARRAY_INVERTER_POWER,
+    CONF_AZIMUTH,
+    CONF_DECLINATION,
     CONF_GROUP_ENERGY_ENTITY,
     CONF_GROUP_MEMBERS,
     CONF_GROUP_NAME,
@@ -87,6 +90,8 @@ NIGHTLY_HOUR, NIGHTLY_MINUTE = 3, 30
 STARTUP_DELAY_S = 60
 SERVICE_TIMEOUT_S = 20
 MODEL_DAYS = 10
+# options that are lists in a multi-array entry (as the coordinator counts arrays)
+_ARRAY_COUNT_KEYS = (CONF_DECLINATION, CONF_AZIMUTH, CONF_MODULES_POWER, CONF_ARRAY_INVERTER_POWER)
 PRODUCTION_REFRESH_DAYS = 10
 DECIDE_LOOKBACK_DAYS = 30
 NEXT_HOURS = 36
@@ -248,6 +253,13 @@ class _SolcastHTTPError(Exception):
         meaning = {401: "API key rejected", 403: "API key not allowed", 404: "site not found",
                    429: "Solcast busy or daily limit reached"}.get(status, "error")
         super().__init__(f"HTTP {status}: {meaning}")
+
+
+class _SolcastBodyError(Exception):
+    """HTTP 200 with a body that is not JSON (ICS-03, 0.1.37.1): counted as a
+    failure with one retry, as a cut-off answer is usually transient."""
+
+    retry = True
 
 
 class HubInputError(Exception):
@@ -443,6 +455,10 @@ class LearningHub:
         except L.LearningDataError as err:
             await self._async_quarantine(now, f"malformed: {sanitize_error(err)}")
             return
+        if self.data.repaired:
+            detail = ", ".join(self.data.repaired)
+            LOGGER.warning("Learning store: dropped malformed %s; evaluated again tonight", detail)
+            self.data.event(now, "store_repaired", f"dropped {detail}; evaluated again in the nightly run")
         if self.data.migrated_from is not None:
             self.data.event(now, "migrated", f"store {self.data.migrated_from} -> {L.STORE_SCHEMA_VERSION}: "
                             "archived forecasts dropped (no total cloud); measurements and production kept")
@@ -609,7 +625,7 @@ class LearningHub:
         retry = False
         try:
             periods = SC.parse_forecast(await self._async_solcast_fetch(key, site), now)
-        except _SolcastHTTPError as err:
+        except (_SolcastHTTPError, _SolcastBodyError) as err:
             error, retry = str(err), err.retry
         except SC.SolcastError as err:
             error = f"answer not usable: {err}"
@@ -633,9 +649,12 @@ class LearningHub:
         headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
         async with asyncio.timeout(SC.API_TIMEOUT_S):
             async with session.get(url, params={"format": "json", "hours": SC.API_HOURS}, headers=headers) as resp:
-                if resp.status == 200:
+                if resp.status != 200:
+                    raise _SolcastHTTPError(resp.status)
+                try:
                     return await resp.json(content_type=None)
-                raise _SolcastHTTPError(resp.status)
+                except ValueError as err:  # JSONDecodeError, UnicodeDecodeError
+                    raise _SolcastBodyError(f"answer is not valid JSON ({type(err).__name__})") from None
 
     async def async_blend_plan(
         self, entry_id: str, base_hours: Mapping[datetime, HourRecord], now: datetime
@@ -1325,15 +1344,22 @@ class LearningHub:
         return f"{stored} windows" + (f", {waiting} waiting for counters" if waiting else "")
 
     def _ac_limits_kwh(self) -> dict[str, float | None]:
-        """Inverter AC limit of each group over one window (kWh). Members of
-        a group share one inverter, so the largest configured value counts."""
+        """Inverter AC limit of each group over one window (kWh). Each member's
+        limit is the one its forecast uses (shared or per array, ICS-02);
+        members of a group share one counter, so the largest value counts."""
         out: dict[str, float | None] = {}
         for group in self.groups:
             watts = 0.0
             for member in group.members:
                 entry = self.hass.config_entries.async_get_entry(member)
-                value = _to_float(entry.options.get(CONF_INVERTER_POWER)) if entry is not None else None
-                if value is not None and math.isfinite(value) and value > 0:
+                if entry is None:
+                    continue
+                options = entry.options
+                count = max([len(v) for k in _ARRAY_COUNT_KEYS
+                             if isinstance(v := options.get(k), (list, tuple))], default=1)
+                value = HG.effective_ac_limit_w(
+                    _to_float(options.get(CONF_INVERTER_POWER)), options.get(CONF_ARRAY_INVERTER_POWER, 0), count)
+                if value is not None:
                     watts = max(watts, value)
             out[group.name] = watts / 1000.0 * HG.WINDOW_S / L.HOUR_S if watts > 0 else None
         return out
@@ -1717,14 +1743,17 @@ class LearningHub:
             for group in self.groups:
                 model = self.data.d["model"].setdefault(group.name, {})
                 model_free = self.data.d["model_free"].setdefault(group.name, {})
-                hours = L.local_day_hours(day, self.tz)
-                if any(k in model for k in hours) and any(k in model_free for k in hours):
-                    continue
                 if model_input is None:
                     model_input = self._model_input(day)
                     if model_input is None:
                         break
                 records, temps, utc_offset = model_input
+                # ICS-01 (0.1.37.1): every hour with station light must be
+                # modelled; hours that arrived later are filled in, hours
+                # already modelled stay as they are.
+                missing = {L.hour_key(start) for start in records} - (set(model) & set(model_free))
+                if not missing:
+                    continue
                 members = [c for m in group.members if (c := array_coordinator(self.hass, m)) is not None]
                 if not members or len(members) != len(group.members):
                     continue
@@ -1740,10 +1769,11 @@ class LearningHub:
                         total[key] = total.get(key, 0.0) + wh
                     for key, wh in hourly_free.items():
                         total_free[key] = total_free.get(key, 0.0) + wh
-                for start in records:
-                    key = L.hour_key(start)
-                    model[key] = round(total.get(key, 0.0) / 1000.0, 5)
-                    model_free[key] = round(total_free.get(key, 0.0) / 1000.0, 5)
+                for key in missing:
+                    if key not in model:
+                        model[key] = round(total.get(key, 0.0) / 1000.0, 5)
+                    if key not in model_free:
+                        model_free[key] = round(total_free.get(key, 0.0) / 1000.0, 5)
                 computed.append(f"{group.name} {day}")
         return f"{len(computed)} group-days" if computed else "nothing to do"
 
