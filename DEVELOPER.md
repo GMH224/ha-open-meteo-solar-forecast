@@ -10,7 +10,7 @@ Applies from v0.1.33.2 (updated for 0.1.34 to 0.1.35.1). Architecture and ration
 | `__init__.py` | entry setup / unload / removal (also deletes the local history store); services; 0.1.34: two entry types (PV array, learning hub), each owning its runtime object in `runtime_data` | yes |
 | `runtime.py` | typed entry aliases (`ArrayConfigEntry`, `HubConfigEntry`), TypedDict models, loaded-entry lookups (0.1.34) | yes (types only) |
 | `learning.py` | **pure** learning engine: parsing, predictors, archive, analog ensemble, application, stage 2, quality control, gate, state, store (de)serialisation, export text (0.1.34) | **no** (enforced by test) |
-| `house_ghi.py` | **pure** measured light at the house: window clear-sky GHI and elevation, quality rules, snow verdict, hour value, day counts, sensor attributes, store section, export (0.1.36) | **no** (enforced by test) |
+| `house_ghi.py` | **pure** measured light at the house: window clear-sky GHI and elevation, quality rules, effective inverter limit (0.1.37.1), snow verdict, hour value, day counts, sensor attributes, store section, export (0.1.36) | **no** (enforced by test) |
 | `solcast.py` | **pure** Solcast combination: call slots and budget, answer parsing, light from the flat site, pairs, factor and weight learning, out-of-sample check, store section, export (0.1.37) | **no** (enforced by test) |
 | `same_day.py` | **pure** same-day correction engine: clear-sky index, response curves and inversion, counter bands, signal, persistence table (β, σ), cautious index, decision times, check, store section (0.1.35) | **no** (enforced by test) |
 | `learning_hub.py` | HA glue for learning: store, station and counter listeners, hourly/nightly/5-minute runs, recorder statistics, coordinator interface, export files (0.1.34; same-day 0.1.35) | yes |
@@ -122,6 +122,18 @@ suite before changing the pin.**
     see the judged day or later (M315, M316). Nothing is served without the
     check and the switch (M320, M321, M324).
 
+18. Stored and external data (0.1.37.1, external review of 0.1.37.0): every
+    stored field that is read back is validated on load, including derived
+    check results (`learning.gate_problem`, M351–M358). Derived data that is
+    malformed is dropped and recomputed (event `store_repaired`); only
+    measurements justify a quarantine of the whole store. A stored time must
+    carry its zone (M360, M364). Limits that the forecast applies (inverters)
+    are read through the same rules wherever else they are used
+    (`house_ghi.effective_ac_limit_w`, M340–M347). A model or check over a day
+    judges the hours it has, with a coverage minimum, and never treats a day
+    as complete because *some* hours exist (M332–M339). Caches compare
+    content, not file metadata (M368).
+
 ## Running the tests
 
 ```bash
@@ -130,7 +142,7 @@ python3.13 -m venv .venv
 .venv/bin/python -m pytest -q            # full suite (~15 s)
 .venv/bin/python -m pyflakes custom_components tests tools
 .venv/bin/python -m mypy custom_components/open_meteo_solar_forecast   # 38 known findings in pre-0.1.34 modules, none new
-.venv/bin/python tests/mutation/run_mutations.py --out mutation_results.json   # 331 mutations, hours on 2 CPUs; --from/--to/--only
+.venv/bin/python tests/mutation/run_mutations.py --out mutation_results.json   # 370 mutations, hours on 2 CPUs; --from/--to/--only
 ```
 
 `pytest-homeassistant-custom-component` brings a real Home Assistant and
@@ -148,6 +160,7 @@ Test files:
 | `tests/test_hybrid.py` | hybrid join rule, pure (0.1.33.3) |
 | `tests/test_hybrid_integration.py` | real HA: hybrid cases, Open-Meteo cache/failure, provenance, parity, release process (0.1.33.3) |
 | `tests/test_v0_1_33_4_audit_remediation.py` | regression tests for every remediated external-audit finding (0.1.33.4) |
+| `tests/test_v0_1_37_1_audit_remediation.py` | regression tests for the seven findings of the external 0.1.37.0 review (0.1.37.1) |
 | `tests/test_shading_geometry.py` | geometry: every obstacle type against hand-calculable shadow edges, electrical model hand-worked, validation messages, work budget (0.1.33.5) |
 | `tests/test_shading_table_apply.py` | table format, interpolation, vectorised sun vs engine and pvlib, application against pvlib beam (0.1.33.5) |
 | `tests/test_shading_integration.py` | real HA: Open-Meteo/local/hybrid with shading, parity without, repair issues, flows, cache, diagnostics, upgrade (0.1.33.5) |

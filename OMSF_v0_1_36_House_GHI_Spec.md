@@ -48,7 +48,7 @@ First match wins; bad before uncertain. Parameters in `house_ghi.py`.
 | bad | `startup` | window start < sunrise + 30 min | the 5K waits 30 min (owner data, Oct 2026) |
 | bad | `low_sun` | elevation < 10°, or model clear-sky energy < 0.01 kWh | owner data: clear station, 08:00 (≈ 12°) the house gets 37 % |
 | bad | `snow` | §6 | panels covered |
-| bad | `clipping` | any group ≥ 95 % of its AC limit (largest `inverter_power` of its members) | 5K: 26 h at 4.8–5.0 kWh/h Jan–Nov 2026 |
+| bad | `clipping` | any group ≥ 95 % of its AC limit (largest limit of its members, as the forecast applies it: per-array limits added up, else `inverter_power`; 0.1.37.1, version 2) | 5K: 26 h at 4.8–5.0 kWh/h Jan–Nov 2026 |
 | bad | `curtailment` | — (no export limit at this installation; owner 16 Nov) | interface completeness |
 | uncertain | `clipping` | 85–95 % of the AC limit | near the limit |
 | uncertain | `low_sun` | 10° ≤ elevation < 18° | owner data: 09:00 (≈ 17°) 76 %; ≥ 20° 0.85–1.0 |

@@ -1,5 +1,39 @@
 # Changelog — GMH224 fork
 
+## 0.1.37.1 — 2026-11-17 — maintenance: external review of 0.1.37.0
+
+Answers the independent review `OMSF_v0_1_37_0_ICS_Quality_Review.md`
+(seven findings, all verified in the source). Release audit:
+`omsf_v0.1.37.1_release_audit.md`. No new feature, no store schema change,
+no change for a complete day or a valid store.
+
+### Fixed
+- **ICS-01 — learning, day check.** A day where the station missed a daylight
+  hour was accepted after three days *without* the production/model ratio
+  check. The ratio is now judged over the hours with both station light and
+  model (at least 80 % of the daylight hours). Station hours that arrive later
+  are modelled in the next nightly run; hours already modelled stay as they are.
+- **ICS-02 — house light, clipping flag.** The clipping check read only the
+  shared inverter capacity. It now uses the same limits as the forecast: per
+  array when set (added up; an array without its own inverter means no limit
+  for the entry), else shared.
+- **ICS-03 — Solcast.** An HTTP 200 answer that is not JSON now counts as a
+  failed call with one retry (before: a general step failure, no failure count).
+- **ICS-04 — stored check results.** Every field the integration reads back
+  from the stage-1, same-day and Solcast check results is validated on load. A
+  malformed result is dropped (event `store_repaired`, re-evaluated in the next
+  nightly run; until then the learning it guards is not applied) instead of
+  breaking a sensor. Measurements stay.
+- **ICS-05 — retained forecast.** A stored time without a time zone discards
+  the retained forecast and fetches a fresh one (before: setup failed again on
+  every retry until the store was deleted).
+- **ICS-06 — snow hold.** The last valid snow depth and its time are stored;
+  after a restart the 24 h hold continues from the original reading (only for
+  the same sensor, with a time zone, not in the future, in range).
+- **ICS-07 — shading cache.** The cache compares the file content (SHA-256),
+  not size and modification time. A file that changes but keeps both is read
+  again; an unchanged file is still not parsed again.
+
 ## 0.1.37.0 — 2026-11-16 — Solcast as a second light forecast
 
 Design record: `OMSF_v0_1_37_Solcast_Blend_Spec.md`. Release audit:

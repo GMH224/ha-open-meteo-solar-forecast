@@ -405,7 +405,7 @@ def test_section_validation():
         ("decisions", {DAY: {"captured": 1, "hours": {"1": [0.5, "x", 9.0]}, "entries": {}}}),
         ("decisions", {DAY: {"captured": 1, "hours": {}, "entries": {"a": [1.0]}}}),
         ("blend", {"c": 5000.0, "weights": [0.0] * 5}), ("blend", {"c": 1100.0, "weights": [1.5, 0, 0, 0, 0]}),
-        ("blend", {"c": 1100.0, "weights": [0.1] * 4}), ("gate", {"passed": "yes"}), ("gate_history", {}),
+        ("blend", {"c": 1100.0, "weights": [0.1] * 4}), ("gate_history", {}),
     ]
     for field, value in cases:
         raw = json.loads(json.dumps(good))

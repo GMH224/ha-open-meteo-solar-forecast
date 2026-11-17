@@ -3,13 +3,35 @@
 **Feature:** local weather source — PV forecast from Home Assistant entities
 (SwissWeather Fusion ≥ 0.3.3) instead of the Open-Meteo API; from 0.1.33.3
 also a hybrid of both.
-**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3, 0.1.33.4), 11 October 2026 (0.1.33.5), 13 October 2026 (0.1.34)
+**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3, 0.1.33.4), 11 October 2026 (0.1.33.5), 13 October 2026 (0.1.34), 17 November 2026 (0.1.37.1)
 **Companion documents:**
 [`omsf_v0.1.33.2_release_audit.md`](omsf_v0.1.33.2_release_audit.md) (what changed, defects, safety analysis),
 [`omsf_v0_1_33_2_ICS_quality_bug_testing_report.md`](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) (tests, mutation record, gaps),
 [`DEVELOPER.md`](DEVELOPER.md) (module map, how to run tests).
 
 ---
+
+## 0i. Update for 0.1.37.1 — external review of 0.1.37.0
+
+Review: `OMSF_v0_1_37_0_ICS_Quality_Review.md` (independent, source-based; not in the repository); answer and
+verification: [`omsf_v0.1.37.1_release_audit.md`](omsf_v0.1.37.1_release_audit.md). No new function; the
+requirements below sharpen existing ones.
+
+| ID | Requirement | Measure |
+|---|---|---|
+| R61 | a day's quality check never passes for lack of data | ratio over the hours with station light and model, ≥ 80 % of daylight; late station hours modelled (ICS-01) |
+| R62 | every use of the inverter limit follows the forecast's rule | `house_ghi.effective_ac_limit_w` (per array, shared, none) (ICS-02) |
+| R63 | every failed external answer is counted and follows the retry rule | body not JSON → failure, one retry (ICS-03) |
+| R64 | stored derived results are validated field by field; malformed ones are recomputed, not trusted | `learning.gate_problem`, event `store_repaired` (ICS-04) |
+| R65 | stored times carry their zone | retained forecast and snow hold reject naive times (ICS-05, ICS-06) |
+| R66 | a hold survives a restart with its original age | snow depth stored with its time and sensor (ICS-06) |
+| R67 | a cache follows content | shading cache by SHA-256 (ICS-07) |
+
+| ID | Failure | Effect |
+|---|---|---|
+| F41 | station hour missing on a day | ratio judged over the rest (≥ 80 %), else unchecked as before |
+| F42 | stored check result malformed | dropped, learning not applied until the next nightly check |
+| F43 | stored snow value implausible | ignored; snow from the sensor or 0 after 24 h as before |
 
 ## 0h. Update for 0.1.37 — Solcast as a second light forecast
 
