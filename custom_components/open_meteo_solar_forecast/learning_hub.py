@@ -87,6 +87,8 @@ from .local_source import HourRecord, LocalSnapshot, _to_float, parse_irradiance
 
 HOURLY_MINUTE = 25
 NIGHTLY_HOUR, NIGHTLY_MINUTE = 3, 30
+# 0.1.37.2: the hourly run catches up a nightly run that is this old
+NIGHTLY_OVERDUE = timedelta(hours=26)
 STARTUP_DELAY_S = 60
 SERVICE_TIMEOUT_S = 20
 MODEL_DAYS = 10
@@ -302,6 +304,7 @@ class LearningHub:
         self.entry_reports: dict[str, EntryReport] = {}
         self.last_hourly: dict[str, Any] = {}
         self.last_nightly: dict[str, Any] = {}
+        self._overdue_reported = False
         self.last_startup: dict[str, Any] = {}
         self.store_size: int | None = None
         # 0.1.35 same-day correction (memory only; results go to the store)
@@ -399,8 +402,30 @@ class LearningHub:
     def _hourly_cb(self, _now: datetime) -> None:
         # Owned by the entry: cancelled when the hub is unloaded.
         self.entry.async_create_background_task(
-            self.hass, self.async_run_hourly(), "open_meteo_solar_forecast learning hourly run"
+            self.hass, self.async_run_hourly_timer(), "open_meteo_solar_forecast learning hourly run"
         )
+
+    def nightly_overdue(self, now: datetime) -> bool:
+        """0.1.37.2: True when no nightly run finished for NIGHTLY_OVERDUE
+        (from the store's creation when there was none yet)."""
+        last = parse_utc(self.data.d.get("last_nightly")) or parse_utc(self.data.d.get("created")) or now
+        return now - last > NIGHTLY_OVERDUE
+
+    async def async_run_hourly_timer(self, now: datetime | None = None) -> None:
+        """The hourly timer's run. Self-healing (0.1.37.2): if the nightly run
+        is overdue (timer lost or failed), it is caught up here, at most once
+        an hour; the event is recorded once per overdue episode."""
+        now = now or dt_util.utcnow()
+        await self.async_run_hourly(now)
+        if not self.nightly_overdue(now):
+            self._overdue_reported = False
+            return
+        if not self._overdue_reported:
+            last = self.data.d.get("last_nightly") or "never"
+            LOGGER.warning("Learning: nightly run overdue (last %s); catching up", last)
+            self.data.event(now, "nightly_overdue", f"last nightly run {last}; caught up by the hourly run")
+            self._overdue_reported = True
+        await self.async_run_nightly(now)
 
     @callback
     def _same_day_cb(self, _now: datetime) -> None:
@@ -414,6 +439,7 @@ class LearningHub:
             self.hass, self.async_run_house_ghi(), "open_meteo_solar_forecast house light"
         )
 
+    @callback
     def _nightly_cb(self, _now: datetime) -> None:
         self.entry.async_create_background_task(
             self.hass, self.async_run_nightly(), "open_meteo_solar_forecast learning nightly run"
