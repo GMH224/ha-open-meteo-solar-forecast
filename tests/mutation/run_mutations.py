@@ -1063,6 +1063,28 @@ MUTATIONS = [
      "    if cached is not None and cached[0] == digest:", "    if False and cached is not None:"),
     ("M370", "ICS-07: the cache grows by one", SHP,
      "    if len(_CACHE) >= _CACHE_MAX:", "    if len(_CACHE) > _CACHE_MAX:"),
+    # --- 0.1.37.2: nightly timer marker and self-healing catch-up ---
+    ("M371", "nightly timer without @callback (the 0.1.36.0-0.1.37.1 defect)", HUB,
+     "    @callback\n    def _nightly_cb(", "    def _nightly_cb("),
+    ("M372", "hourly timer without @callback", HUB,
+     "    @callback\n    def _hourly_cb(", "    def _hourly_cb("),
+    ("M373", "same-day timer without @callback", HUB,
+     "    @callback\n    def _same_day_cb(", "    def _same_day_cb("),
+    ("M374", "house-light timer without @callback", HUB,
+     "    @callback\n    def _house_ghi_cb(", "    def _house_ghi_cb("),
+    ("M375", "startup timer without @callback", HUB,
+     "    @callback\n    def _startup_cb(", "    def _startup_cb("),
+    ("M376", "the hourly timer does not use the catch-up", HUB,
+     "self.hass, self.async_run_hourly_timer(), ", "self.hass, self.async_run_hourly(), "),
+    ("M377", "overdue never detected", HUB,
+     "        return now - last > NIGHTLY_OVERDUE", "        return False"),
+    ("M378", "overdue after 10 days only", HUB,
+     "NIGHTLY_OVERDUE = timedelta(hours=26)", "NIGHTLY_OVERDUE = timedelta(hours=240)"),
+    ("M379", "overdue event repeated every hour", HUB,
+     "            self._overdue_reported = True\n", "            self._overdue_reported = False\n"),
+    ("M380", "overdue episode never ends", HUB,
+     "        if not self.nightly_overdue(now):\n            self._overdue_reported = False\n            return",
+     "        if not self.nightly_overdue(now):\n            return"),
 ]
 
 
@@ -1092,26 +1114,32 @@ def run(root: Path, only: str | None, start: str | None = None, stop: str | None
             # The tests closest to the mutated file run first (a caught
             # mutation stops at the first failure); then everything.
             if rel == SCM:
-                patterns = ("test_v0_1_37_1_*.py", "test_solcast*.py")
+                patterns = ("test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_solcast*.py")
             elif rel in (HGM, DIAG):
-                patterns = ("test_v0_1_37_1_*.py", "test_solcast*.py", "test_house_ghi*.py")
+                patterns = ("test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_solcast*.py", "test_house_ghi*.py")
             elif rel in (SDM, SENS, LRN, HUB, ENT, REC):
-                patterns = ("test_v0_1_37_1_*.py", "test_solcast*.py", "test_house_ghi*.py", "test_same_day*.py",
+                patterns = ("test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_solcast*.py", "test_house_ghi*.py", "test_same_day*.py",
                             "test_learning_*.py")
             elif rel in (SHD, SHP):
-                patterns = ("test_v0_1_37_1_*.py", "test_shading_*.py")
+                patterns = ("test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_shading_*.py")
             else:
-                patterns = ("test_v0_1_37_1_*.py", "test_local_*.py", "test_hybrid*.py", "test_v0_1_33_4_*.py",
+                patterns = ("test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_local_*.py", "test_hybrid*.py", "test_v0_1_33_4_*.py",
                             "test_learning_hub.py")
             first = sorted(
                 str(p.relative_to(work))
                 for pattern in patterns
                 for p in (work / "tests").glob(pattern)
             )
-            proc = subprocess.run(
-                [python, "-m", "pytest", "-q", "-x", "-W", "ignore", "-p", "no:randomly", *first, "tests"],
-                cwd=work, capture_output=True, text=True, timeout=900,
-            )
+            try:
+                proc = subprocess.run(
+                    [python, "-m", "pytest", "-q", "-x", "-W", "ignore", "-p", "no:randomly", *first, "tests"],
+                    cwd=work, capture_output=True, text=True, timeout=900,
+                )
+            except subprocess.TimeoutExpired:  # a hanging suite fails: the mutant is caught
+                results.append({"id": mid, "description": desc, "file": rel, "status": "CAUGHT",
+                                "first_failure": ["timeout: the suite hangs (900 s)"]})
+                print(mid, "CAUGHT", ["timeout: the suite hangs (900 s)"], flush=True)
+                continue
             failed = [
                 line.split(" - ")[0].split(" ", 1)[1].strip()
                 for line in proc.stdout.splitlines()

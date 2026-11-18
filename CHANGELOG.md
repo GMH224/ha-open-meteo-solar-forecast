@@ -1,5 +1,27 @@
 # Changelog — GMH224 fork
 
+## 0.1.37.2 — 2026-11-18 — fix: nightly learning run did not start
+
+Release audit: `omsf_v0.1.37.2_release_audit.md`.
+
+### Fixed
+- **Nightly learning run (since 0.1.36.0).** The nightly timer function had
+  lost its `@callback` marker when the house-light timer was added, so Home
+  Assistant ran it on a worker thread. Under Python 3.14 (Home Assistant
+  2026.11) starting the run from there fails ("loop is not the running
+  loop"), so no nightly run happened at 03:30: day decisions, the learning
+  check, cell temperature, the same-day table, the Solcast weights and the
+  nightly export stood still. The learning that was applied stayed applied
+  with its last values; no measurement was lost, and the missed days are
+  decided at the next run.
+
+### Added
+- **Self-healing.** If the last nightly run is older than 26 h, the hourly run
+  catches it up (at most once an hour) and records the event
+  `nightly_overdue` once per episode.
+- Tests that every timer function carries the marker and starts its job on the
+  event loop (independent of the Python version), and mutations M371–M380.
+
 ## 0.1.37.1 — 2026-11-17 — maintenance: external review of 0.1.37.0
 
 Answers the independent review `OMSF_v0_1_37_0_ICS_Quality_Review.md`

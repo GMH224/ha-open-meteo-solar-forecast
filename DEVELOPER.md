@@ -134,6 +134,14 @@ suite before changing the pin.**
     as complete because *some* hours exist (M332–M339). Caches compare
     content, not file metadata (M368).
 
+19. Timers (0.1.37.2): every function handed to `async_track_time_change`,
+    `async_call_later` or a state listener that touches the loop carries
+    `@callback` (`test_every_timer_callback_is_marked`, M371–M375). The test
+    environment (Python 3.13) tolerates a task started from a worker thread;
+    Home Assistant on Python 3.14 does not, so a test that only fires the timer
+    is not enough. A periodic job whose absence matters has a watchdog (the
+    hourly run catches up an overdue nightly run, M376–M380).
+
 ## Running the tests
 
 ```bash
@@ -142,7 +150,7 @@ python3.13 -m venv .venv
 .venv/bin/python -m pytest -q            # full suite (~15 s)
 .venv/bin/python -m pyflakes custom_components tests tools
 .venv/bin/python -m mypy custom_components/open_meteo_solar_forecast   # 38 known findings in pre-0.1.34 modules, none new
-.venv/bin/python tests/mutation/run_mutations.py --out mutation_results.json   # 370 mutations, hours on 2 CPUs; --from/--to/--only
+.venv/bin/python tests/mutation/run_mutations.py --out mutation_results.json   # 380 mutations, hours on 2 CPUs; --from/--to/--only
 ```
 
 `pytest-homeassistant-custom-component` brings a real Home Assistant and
@@ -161,6 +169,7 @@ Test files:
 | `tests/test_hybrid_integration.py` | real HA: hybrid cases, Open-Meteo cache/failure, provenance, parity, release process (0.1.33.3) |
 | `tests/test_v0_1_33_4_audit_remediation.py` | regression tests for every remediated external-audit finding (0.1.33.4) |
 | `tests/test_v0_1_37_1_audit_remediation.py` | regression tests for the seven findings of the external 0.1.37.0 review (0.1.37.1) |
+| `tests/test_v0_1_37_2_nightly_timer.py` | timer marker and event-loop checks; nightly catch-up by the hourly run (0.1.37.2) |
 | `tests/test_shading_geometry.py` | geometry: every obstacle type against hand-calculable shadow edges, electrical model hand-worked, validation messages, work budget (0.1.33.5) |
 | `tests/test_shading_table_apply.py` | table format, interpolation, vectorised sun vs engine and pvlib, application against pvlib beam (0.1.33.5) |
 | `tests/test_shading_integration.py` | real HA: Open-Meteo/local/hybrid with shading, parity without, repair issues, flows, cache, diagnostics, upgrade (0.1.33.5) |

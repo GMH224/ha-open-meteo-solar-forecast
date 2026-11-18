@@ -3,13 +3,24 @@
 **Feature:** local weather source — PV forecast from Home Assistant entities
 (SwissWeather Fusion ≥ 0.3.3) instead of the Open-Meteo API; from 0.1.33.3
 also a hybrid of both.
-**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3, 0.1.33.4), 11 October 2026 (0.1.33.5), 13 October 2026 (0.1.34), 17 November 2026 (0.1.37.1)
+**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3, 0.1.33.4), 11 October 2026 (0.1.33.5), 13 October 2026 (0.1.34), 17 November 2026 (0.1.37.1), 18 November 2026 (0.1.37.2)
 **Companion documents:**
 [`omsf_v0.1.33.2_release_audit.md`](omsf_v0.1.33.2_release_audit.md) (what changed, defects, safety analysis),
 [`omsf_v0_1_33_2_ICS_quality_bug_testing_report.md`](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) (tests, mutation record, gaps),
 [`DEVELOPER.md`](DEVELOPER.md) (module map, how to run tests).
 
 ---
+
+## 0j. Update for 0.1.37.2 — nightly timer
+
+| ID | Requirement | Measure |
+|---|---|---|
+| R68 | every timer job starts on the event loop | `@callback` on all timer functions, checked by a test independent of the Python version |
+| R69 | a missing nightly run is detected and repaired without the owner | the hourly run catches up a nightly run older than 26 h; event `nightly_overdue` |
+
+| ID | Failure | Effect |
+|---|---|---|
+| F44 | nightly timer lost or failing | learning frozen at its last values (still applied, no data lost) for at most 26 h + 1 h, then caught up |
 
 ## 0i. Update for 0.1.37.1 — external review of 0.1.37.0
 
