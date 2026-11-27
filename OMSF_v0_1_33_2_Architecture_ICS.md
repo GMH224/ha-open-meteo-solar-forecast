@@ -3,13 +3,23 @@
 **Feature:** local weather source — PV forecast from Home Assistant entities
 (SwissWeather Fusion ≥ 0.3.3) instead of the Open-Meteo API; from 0.1.33.3
 also a hybrid of both.
-**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3, 0.1.33.4), 11 October 2026 (0.1.33.5), 13 October 2026 (0.1.34), 17 November 2026 (0.1.37.1), 18 November 2026 (0.1.37.2)
+**Date:** 6 October 2026 (0.1.33.2), updated 6 October 2026 (0.1.33.3, 0.1.33.4), 11 October 2026 (0.1.33.5), 13 October 2026 (0.1.34), 17 November 2026 (0.1.37.1), 18 November 2026 (0.1.37.2), 27 November 2026 (0.1.37.3)
 **Companion documents:**
 [`omsf_v0.1.33.2_release_audit.md`](omsf_v0.1.33.2_release_audit.md) (what changed, defects, safety analysis),
 [`omsf_v0_1_33_2_ICS_quality_bug_testing_report.md`](omsf_v0_1_33_2_ICS_quality_bug_testing_report.md) (tests, mutation record, gaps),
 [`DEVELOPER.md`](DEVELOPER.md) (module map, how to run tests).
 
 ---
+
+## 0k. Update for 0.1.37.3 — station check over accepted days
+
+| ID | Requirement | Measure |
+|---|---|---|
+| R70 | the station check detects a station systematically unlike the house, not single days the day check already excluded | correlation over accepted days; window 14 → 28 days below 40 blocks; pause when > 1/3 of ≥ 7 decided days are not representative |
+
+| ID | Failure | Effect |
+|---|---|---|
+| F23 (revised) | station not representative: r < 0.85 on accepted days, or > 1/3 of the decided days rejected | state `paused`, forecast raw; reason names which rule |
 
 ## 0j. Update for 0.1.37.2 — nightly timer
 

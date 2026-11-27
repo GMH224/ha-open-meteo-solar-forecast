@@ -580,6 +580,7 @@ def test_representativeness():
     for d in range(1, 8):
         day = (datetime(2026, 10, 1) + timedelta(days=d)).date().isoformat()
         _full_day(data, day, kt=rng.uniform(0.1, 0.7))
+        data.d["days"][day] = {"status": L.DAY_OK, "decided": 0, "details": {}}  # 0.1.37.3: accepted days only
         for k in _day_hours_with_sun(day, 10):
             data.d["model"].setdefault("10K", {})[k] = rng.uniform(0.2, 4.0)  # unrelated to station GHI
     model = data.d["model"]["10K"]
@@ -593,22 +594,23 @@ def test_representativeness():
         for k, v in zip(keys, values[1:] + values[:1]):
             production[k] = v
     now = datetime(2026, 10, 9, 2, tzinfo=UTC)
-    rep = L.representativeness(data, [GROUP], now, LAT, LON)
+    rep = L.representativeness(data, [GROUP], now, LAT, LON, TZ)
     assert rep["r"] == pytest.approx(1.0) and rep["representative"]
     assert rep["blocks"] >= L.REPRESENTATIVE_MIN_BLOCKS and "3-hour" in rep["basis"]
     hourly = np.corrcoef([model[k] for k in model], [production[k] for k in model])[0, 1]
     assert hourly < L.REPRESENTATIVE_MIN_R  # the hourly check would have paused learning
     for k in production:
         production[k] = rng.uniform(0, 5)
-    assert not L.representativeness(data, [GROUP], now, LAT, LON)["representative"]
-    empty = L.representativeness(L.LearningData(), [GROUP], now, LAT, LON)
+    assert not L.representativeness(data, [GROUP], now, LAT, LON, TZ)["representative"]
+    empty = L.representativeness(L.LearningData(), [GROUP], now, LAT, LON, TZ)
     assert empty["r"] is None and empty["hours"] == 0 and empty["representative"]
     # hours without a model value are left out; a block needs two hours
     few = L.LearningData()
     few.d["station_hours"] = dict(data.d["station_hours"])
+    few.d["days"] = dict(data.d["days"])
     few.d["production"]["10K"] = dict(production)
     few.d["model"]["10K"] = {k: v for i, (k, v) in enumerate(sorted(model.items())) if i % 3 == 0}
-    assert L.representativeness(few, [GROUP], now, LAT, LON)["blocks"] == 0
+    assert L.representativeness(few, [GROUP], now, LAT, LON, TZ)["blocks"] == 0
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,29 @@
 # Changelog — GMH224 fork
 
+## 0.1.37.3 — 2026-11-27 — station check over accepted days
+
+Release audit: `omsf_v0.1.37.3_release_audit.md`.
+
+### Changed
+- **Station check (representativeness).** The learning paused on 23 Nov
+  ("station not representative of the house") although its out-of-sample
+  improvement was +9.4 %: two broken-cloud days that the day check had already
+  excluded pulled the 14-day correlation from 0.89 to 0.79, and in winter only
+  1–2 three-hour blocks a day remain. Now:
+  - the correlation uses only the days the day check accepted;
+  - with fewer than 40 blocks the window grows from 14 to 21 or 28 days;
+  - a station that is systematically unlike the house pauses the learning
+    when more than a third of at least 7 decided days in the window were
+    rejected as not representative (new reason "too many days rejected").
+  Replay of the owner's data 28 Oct–23 Nov: before 1 paused day and r falling
+  from 0.96 to 0.79; now never paused, r 0.90–0.97, at most 14 % of the days
+  rejected.
+- A stored result of the earlier rule is evaluated again at startup, so the
+  update takes effect at once. Events `station_unrepresentative` (with the
+  reason) and `station_representative` (recovery).
+- The station correlation sensor shows the window, the decided and rejected
+  days and the limit `max_rejected_share`.
+
 ## 0.1.37.2 — 2026-11-18 — fix: nightly learning run did not start
 
 Release audit: `omsf_v0.1.37.2_release_audit.md`.

@@ -142,6 +142,13 @@ suite before changing the pin.**
     is not enough. A periodic job whose absence matters has a watchdog (the
     hourly run catches up an overdue nightly run, M376–M380).
 
+20. Guards that pause the learning (0.1.37.3) judge what they are for: the
+    station check looks for a station systematically unlike the house, so it
+    uses accepted days and the share of rejected ones, not the raw days the
+    day check already removed; its sample must stay large enough in winter
+    (window grows to 28 days). Replay real installation data before changing
+    such a limit, and record the replay in the constant's docstring.
+
 ## Running the tests
 
 ```bash
@@ -150,7 +157,7 @@ python3.13 -m venv .venv
 .venv/bin/python -m pytest -q            # full suite (~15 s)
 .venv/bin/python -m pyflakes custom_components tests tools
 .venv/bin/python -m mypy custom_components/open_meteo_solar_forecast   # 38 known findings in pre-0.1.34 modules, none new
-.venv/bin/python tests/mutation/run_mutations.py --out mutation_results.json   # 380 mutations, hours on 2 CPUs; --from/--to/--only
+.venv/bin/python tests/mutation/run_mutations.py --out mutation_results.json   # 395 mutations, hours on 2 CPUs; --from/--to/--only
 ```
 
 `pytest-homeassistant-custom-component` brings a real Home Assistant and
@@ -170,6 +177,7 @@ Test files:
 | `tests/test_v0_1_33_4_audit_remediation.py` | regression tests for every remediated external-audit finding (0.1.33.4) |
 | `tests/test_v0_1_37_1_audit_remediation.py` | regression tests for the seven findings of the external 0.1.37.0 review (0.1.37.1) |
 | `tests/test_v0_1_37_2_nightly_timer.py` | timer marker and event-loop checks; nightly catch-up by the hourly run (0.1.37.2) |
+| `tests/test_v0_1_37_3_station_check.py` | station check over accepted days, winter window, rejected-share guard, startup re-evaluation (0.1.37.3) |
 | `tests/test_shading_geometry.py` | geometry: every obstacle type against hand-calculable shadow edges, electrical model hand-worked, validation messages, work budget (0.1.33.5) |
 | `tests/test_shading_table_apply.py` | table format, interpolation, vectorised sun vs engine and pvlib, application against pvlib beam (0.1.33.5) |
 | `tests/test_shading_integration.py` | real HA: Open-Meteo/local/hybrid with shading, parity without, repair issues, flows, cache, diagnostics, upgrade (0.1.33.5) |

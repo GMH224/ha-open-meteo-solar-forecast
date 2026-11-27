@@ -472,9 +472,9 @@ MUTATIONS = [
     ("M160", "applied without the owner's switch", LRN,
      '        if apply_switch:\n            return STATE_APPLIED',
      '        if True:\n            return STATE_APPLIED'),
-    ("M161", 'station representativeness ignored', LRN,
-     '    if not representative:\n        return STATE_PAUSED',
-     '    if False:\n        return STATE_PAUSED'),
+    ("M161", 'station representativeness ignored (0.1.37.3: retargeted)', LRN,
+     '    if not representative:\n        if representative_reason',
+     '    if False:\n        if representative_reason'),
     ("M162", 'no pause after a failed gate', LRN,
      '    if ever_passed:\n        return STATE_PAUSED',
      '    if False:\n        return STATE_PAUSED'),
@@ -790,9 +790,9 @@ MUTATIONS = [
      '        item[1] += meas[H["ghi"]]'),
     ("M265", 'representativeness hourly instead of 3-hour sums', LRN,
      'REPRESENTATIVE_BLOCK_H = 3', 'REPRESENTATIVE_BLOCK_H = 1'),
-    ("M266", 'representativeness blocks with a single hour used', LRN,
-     '    used = [item for item in blocks.values() if item[2] >= 2]',
-     '    used = [item for item in blocks.values() if item[2] >= 1]'),
+    ("M266", 'representativeness blocks with a single hour used (0.1.37.3: retargeted)', LRN,
+     '    return [item for item in blocks.values() if item[2] >= 2], hours',
+     '    return [item for item in blocks.values() if item[2] >= 1], hours'),
     ("M267", 'representativeness takes missing model hours as zero', LRN,
      '        if not names or any(v is None for v in produced) or any(v is None for v in modelled):',
      '        if not names or any(v is None for v in produced):'),
@@ -1085,6 +1085,41 @@ MUTATIONS = [
     ("M380", "overdue episode never ends", HUB,
      "        if not self.nightly_overdue(now):\n            self._overdue_reported = False\n            return",
      "        if not self.nightly_overdue(now):\n            return"),
+    # --- 0.1.37.3: station check over accepted days ---
+    ("M381", "station check counts rejected days again (0.1.37.2 rule)", LRN,
+     'accepted[day] = (data.d["days"].get(day) or {}).get("status") == DAY_OK', "accepted[day] = True"),
+    ("M382", "station check window never grows", LRN,
+     "    while len(used) < REPRESENTATIVE_TARGET_BLOCKS and window < REPRESENTATIVE_MAX_WINDOW_DAYS:",
+     "    while False:"),
+    ("M383", "station check window up to 35 days", LRN,
+     "REPRESENTATIVE_MAX_WINDOW_DAYS = 28", "REPRESENTATIVE_MAX_WINDOW_DAYS = 35"),
+    ("M384", "station check window grows below 20 blocks only", LRN,
+     "REPRESENTATIVE_TARGET_BLOCKS = 40", "REPRESENTATIVE_TARGET_BLOCKS = 20"),
+    ("M385", "exactly a third rejected pauses", LRN,
+     "share > REPRESENTATIVE_MAX_REJECTED_SHARE:", "share >= REPRESENTATIVE_MAX_REJECTED_SHARE:"),
+    ("M386", "rejected share judged on fewer than 7 days", LRN,
+     "if len(decided) >= REPRESENTATIVE_MIN_DECIDED_DAYS and share", "if share"),
+    ("M387", "rejected share never pauses", LRN,
+     'result.update(representative=False, reason="rejected_days")', "result.update(reason=None)"),
+    ("M388", "every rejection reason counts as not representative", LRN,
+     'rejected = sum(1 for st in decided if st == "not_representative")',
+     "rejected = sum(1 for st in decided if st != DAY_OK)"),
+    ("M389", "rejected share over 28 days whatever the window", LRN,
+     "    first = (today - timedelta(days=window)).isoformat()",
+     "    first = (today - timedelta(days=REPRESENTATIVE_MAX_WINDOW_DAYS)).isoformat()"),
+    ("M390", "pause reason ignored", LRN,
+     '        if representative_reason == "rejected_days":', "        if False:"),
+    ("M391", "hub does not pass the pause reason", HUB,
+     "rep_reason if isinstance(rep_reason, str) else None)", "None)"),
+    ("M392", "old-rule result not re-evaluated at startup", HUB,
+     '        if not rep or "window_days" in rep:\n            return', "        if True:\n            return"),
+    ("M393", "station check re-evaluated at every startup", HUB,
+     '        if not rep or "window_days" in rep:', "        if not rep:"),
+    ("M394", "recovery not recorded", HUB,
+     'self.data.event(now, "station_representative",', 'LOGGER.debug("%s %s", now,'),
+    ("M395", "rejected-share limit not shown on the correlation sensor", ENT,
+     '    rep["max_rejected_share"] = round(L.REPRESENTATIVE_MAX_REJECTED_SHARE, 3)  # 0.1.37.3',
+     '    pass'),
 ]
 
 
@@ -1114,16 +1149,16 @@ def run(root: Path, only: str | None, start: str | None = None, stop: str | None
             # The tests closest to the mutated file run first (a caught
             # mutation stops at the first failure); then everything.
             if rel == SCM:
-                patterns = ("test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_solcast*.py")
+                patterns = ("test_v0_1_37_3_*.py", "test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_solcast*.py")
             elif rel in (HGM, DIAG):
-                patterns = ("test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_solcast*.py", "test_house_ghi*.py")
+                patterns = ("test_v0_1_37_3_*.py", "test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_solcast*.py", "test_house_ghi*.py")
             elif rel in (SDM, SENS, LRN, HUB, ENT, REC):
-                patterns = ("test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_solcast*.py", "test_house_ghi*.py", "test_same_day*.py",
+                patterns = ("test_v0_1_37_3_*.py", "test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_solcast*.py", "test_house_ghi*.py", "test_same_day*.py",
                             "test_learning_*.py")
             elif rel in (SHD, SHP):
-                patterns = ("test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_shading_*.py")
+                patterns = ("test_v0_1_37_3_*.py", "test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_shading_*.py")
             else:
-                patterns = ("test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_local_*.py", "test_hybrid*.py", "test_v0_1_33_4_*.py",
+                patterns = ("test_v0_1_37_3_*.py", "test_v0_1_37_2_*.py", "test_v0_1_37_1_*.py", "test_local_*.py", "test_hybrid*.py", "test_v0_1_33_4_*.py",
                             "test_learning_hub.py")
             first = sorted(
                 str(p.relative_to(work))

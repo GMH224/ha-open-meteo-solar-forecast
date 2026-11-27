@@ -317,7 +317,7 @@ measures (e.g. West and South). Your PV entries are not changed.
 | `sensor.solar_forecast_learning_<group>_correction_today` / `_tomorrow` | kWh corrected minus raw for that inverter |
 | `sensor.solar_forecast_learning_<group>_energy_error` | mean daily energy error of the corrected decision forecast |
 | `sensor.solar_forecast_learning_<group>_calibration` | stage-2 factors; attribute `suggested_efficiency_change_percent` |
-| `sensor.solar_forecast_learning_station_correlation` | is the station representative of your roof? Production against your model on the station's light, in 3-hour sums over 14 days (learning pauses below 0.85) |
+| `sensor.solar_forecast_learning_station_correlation` | is the station representative of your roof? Production against your model on the station's light, in 3-hour sums over the days the day check accepted, 14 days (up to 28 in winter while there are fewer than 40 blocks). Learning pauses below 0.85, or when more than a third of at least 7 decided days were rejected as not representative |
 | `sensor.solar_forecast_learning_station_albedo` | reflected / global light at the station; above 0.4: snow on the ground (days excluded) |
 | `sensor.solar_forecast_learning_evidence`, `_last_run` | how much evidence exists; the last nightly run with each step's outcome |
 | `switch.solar_forecast_learning_same_day_switch` | your authority over the same-day correction (below) |
