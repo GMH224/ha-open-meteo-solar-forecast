@@ -183,6 +183,7 @@ def _station_attributes(hub: LearningHub, _group: str | None) -> dict[str, Any]:
     ]
     rep["last_excluded_day"] = excluded[-1] if excluded else None
     rep["required_r"] = L.REPRESENTATIVE_MIN_R
+    rep["max_rejected_share"] = round(L.REPRESENTATIVE_MAX_REJECTED_SHARE, 3)  # 0.1.37.3
     return rep
 
 

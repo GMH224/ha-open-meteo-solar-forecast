@@ -171,6 +171,19 @@ passing clouds (owner data 13-20 Oct: r = 0.83 hourly, 0.91 in 3-hour sums,
 0.93 daily, time alignment confirmed); the check is meant to catch a station
 that is systematically unlike the house."""
 REPRESENTATIVE_MIN_BLOCKS = REPRESENTATIVE_MIN_HOURS // REPRESENTATIVE_BLOCK_H
+REPRESENTATIVE_TARGET_BLOCKS = 40
+REPRESENTATIVE_MAX_WINDOW_DAYS = 28
+REPRESENTATIVE_MAX_REJECTED_SHARE = 1.0 / 3.0
+REPRESENTATIVE_MIN_DECIDED_DAYS = 7
+"""0.1.37.3: the correlation uses only days the day check accepted (a day it
+rejected is already out of the learning and must not pause it); with fewer
+than 40 blocks the window grows by 7 days up to 28 (winter: 1-2 blocks a
+day). A station that is systematically unlike the house is caught by the
+share of days rejected as not representative (> 1/3 of at least 7 decided
+days). Owner data 28 Oct-23 Nov: old rule r 0.96 -> 0.79 (paused), new rule
+0.90-0.97, rejected share at most 0.14."""
+REPRESENTATIVE_REASON_CORRELATION = "station not representative of the house (correlation below limit)"
+REPRESENTATIVE_REASON_REJECTED = "station not representative of the house (too many days rejected)"
 SNOW_ALBEDO = 0.4
 SNOW_MIN_GHI = 100.0
 COUNTER_STEP_FACTOR = 1.2
@@ -1514,26 +1527,23 @@ def decide_day(
     return DAY_OK, details
 
 
-def representativeness(
-    data: LearningData,
-    groups: Iterable[GroupInfo],
-    now: datetime,
-    latitude: float,
-    longitude: float,
-) -> dict[str, Any]:
-    """Correlation of total production with the members' model on the
-    station's measured light, in 3-hour sums, over 14 days (0.1.35.1; before:
-    hourly production against station GHI). Blocks need at least two hours
-    with the sun at 10° or more and every group's production and model."""
-    now_ts = int(now.timestamp())
-    names = [g.name for g in groups]
+def _representative_blocks(
+    data: LearningData, names: list[str], now_ts: int, window_days: int,
+    latitude: float, longitude: float, tz: tzinfo,
+) -> tuple[list[list[float]], int]:
     block_s = REPRESENTATIVE_BLOCK_H * HOUR_S
     blocks: dict[int, list[float]] = {}  # block -> [production, model, hours]
     hours = 0
+    accepted: dict[str, bool] = {}
     for key, meas in data.d["station_hours"].items():
-        if key < now_ts - REPRESENTATIVE_WINDOW_DAYS * DAY_S or key >= now_ts or meas[H["ghi"]] is None:
+        if key < now_ts - window_days * DAY_S or key >= now_ts or meas[H["ghi"]] is None:
             continue
         if hour_geometry(key, latitude, longitude)[1] < STAGE2_MIN_ELEVATION_DEG:
+            continue
+        day = local_date(key, tz)
+        if day not in accepted:
+            accepted[day] = (data.d["days"].get(day) or {}).get("status") == DAY_OK
+        if not accepted[day]:
             continue
         produced = [data.d["production"].get(name, {}).get(key) for name in names]
         modelled = [data.d["model"].get(name, {}).get(key) for name in names]
@@ -1544,9 +1554,48 @@ def representativeness(
         item[1] += sum(v for v in modelled if v is not None)
         item[2] += 1
         hours += 1
-    used = [item for item in blocks.values() if item[2] >= 2]
-    result: dict[str, Any] = {"r": None, "hours": hours, "blocks": len(used), "representative": True,
-                              "basis": f"{REPRESENTATIVE_BLOCK_H}-hour sums, production vs model on station light"}
+    return [item for item in blocks.values() if item[2] >= 2], hours
+
+
+def representativeness(
+    data: LearningData,
+    groups: Iterable[GroupInfo],
+    now: datetime,
+    latitude: float,
+    longitude: float,
+    tz: tzinfo,
+) -> dict[str, Any]:
+    """Is the station a fair stand-in for the house? (0.1.37.3)
+
+    1. Correlation of total production with the members' model on the
+       station's measured light, in 3-hour sums (0.1.35.1), over the days the
+       day check accepted. Blocks need at least two hours with the sun at 10°
+       or more and every group's production and model. The window is 14 days,
+       grown by 7 up to 28 while it has fewer than 40 blocks.
+    2. Share of the decided days in that window rejected as not
+       representative: above 1/3 (of at least 7) the station is
+       systematically unlike the house, whatever the correlation."""
+    now_ts = int(now.timestamp())
+    names = [g.name for g in groups]
+    window = REPRESENTATIVE_WINDOW_DAYS
+    used, hours = _representative_blocks(data, names, now_ts, window, latitude, longitude, tz)
+    while len(used) < REPRESENTATIVE_TARGET_BLOCKS and window < REPRESENTATIVE_MAX_WINDOW_DAYS:
+        window = min(window + 7, REPRESENTATIVE_MAX_WINDOW_DAYS)
+        used, hours = _representative_blocks(data, names, now_ts, window, latitude, longitude, tz)
+    today = now.astimezone(tz).date()
+    first = (today - timedelta(days=window)).isoformat()
+    statuses = [item.get("status") for day, item in data.d["days"].items() if first <= day < today.isoformat()]
+    decided = [st for st in statuses if st == DAY_OK or st in DAY_REASONS]
+    rejected = sum(1 for st in decided if st == "not_representative")
+    share = rejected / len(decided) if decided else 0.0
+    result: dict[str, Any] = {
+        "r": None, "hours": hours, "blocks": len(used), "window_days": window,
+        "decided_days": len(decided), "rejected_days": rejected, "rejected_share": round(share, 3),
+        "representative": True, "reason": None,
+        "basis": f"{REPRESENTATIVE_BLOCK_H}-hour sums, production vs model on station light, accepted days",
+    }
+    if len(decided) >= REPRESENTATIVE_MIN_DECIDED_DAYS and share > REPRESENTATIVE_MAX_REJECTED_SHARE:
+        result.update(representative=False, reason="rejected_days")
     if len(used) < REPRESENTATIVE_MIN_BLOCKS:
         return result
     x = np.array([item[1] for item in used])
@@ -1554,7 +1603,9 @@ def representativeness(
     if float(x.std()) == 0.0 or float(y.std()) == 0.0:
         return result
     r = float(np.corrcoef(x, y)[0, 1])
-    result.update(r=round(r, 4), representative=r >= REPRESENTATIVE_MIN_R)
+    result["r"] = round(r, 4)
+    if r < REPRESENTATIVE_MIN_R:
+        result.update(representative=False, reason="correlation")
     return result
 
 
@@ -1743,10 +1794,13 @@ def derive_state(
     apply_switch: bool,
     representative: bool,
     ever_passed: bool,
+    representative_reason: str | None = None,
 ) -> tuple[str, str]:
     """State and reason (§9). Only ``applied`` changes the forecast."""
     if not representative:
-        return STATE_PAUSED, "station not representative of the house (correlation below limit)"
+        if representative_reason == "rejected_days":
+            return STATE_PAUSED, REPRESENTATIVE_REASON_REJECTED
+        return STATE_PAUSED, REPRESENTATIVE_REASON_CORRELATION
     if gate is None or gate.get("algorithm") != ALGORITHM_VERSION:
         return STATE_COLLECTING, "no skill evaluation for this algorithm version yet"
     if gate.get("passed"):

@@ -392,11 +392,43 @@ class LearningHub:
         await self._step(report, "station_backfill", self._async_backfill_station(
             now, STATION_BACKFILL_FIRST if first else STATION_BACKFILL_RESTART))
         await self._step(report, "counter_backfill", self._async_backfill_counters(now))
+        await self._step(report, "representativeness", self._async_refresh_old_representativeness(now))
         self.last_startup = report  # kept apart: the hourly run replaces its own report
         await self.async_run_hourly(now)
         last = parse_utc(self.data.d.get("last_nightly"))
         if last is None or now - last > timedelta(hours=20):
             await self.async_run_nightly(now)
+
+    async def _async_representativeness(self, now: datetime) -> None:
+        """Evaluate the station check (0.1.37.3 rule); called by the nightly
+        run, and at startup while the stored result is from an older rule."""
+        rep = await self.hass.async_add_executor_job(
+            L.representativeness, self.data.view(), self.groups, now, self.latitude, self.longitude, self.tz
+        )
+        rep["evaluated"] = now.isoformat()
+        previous = self.data.d.get("representativeness") or {}
+        if previous.get("representative", True) and not rep["representative"]:
+            if rep["reason"] == "rejected_days":
+                detail = (f"{rep['rejected_days']} of {rep['decided_days']} days rejected as not representative "
+                          f"(limit 1/3): learning paused")
+            else:
+                detail = f"correlation {rep['r']} below {L.REPRESENTATIVE_MIN_R} on accepted days: learning paused"
+            self.data.event(now, "station_unrepresentative", detail)
+        elif not previous.get("representative", True) and rep["representative"]:
+            self.data.event(now, "station_representative",
+                            f"correlation {rep['r']}, {rep['rejected_days']} of {rep['decided_days']} days rejected")
+        self.data.d["representativeness"] = rep
+
+    async def _async_refresh_old_representativeness(self, now: datetime) -> None:
+        """0.1.37.3: a result of the earlier rule (no ``window_days``) is
+        evaluated again at startup, so an update takes effect at once."""
+        rep = self.data.d.get("representativeness")
+        if not rep or "window_days" in rep:
+            return
+        async with self._lock:
+            await self._async_representativeness(now)
+            self._recompute_state(now)
+            self._save()
 
     @callback
     def _hourly_cb(self, _now: datetime) -> None:
@@ -805,11 +837,13 @@ class LearningHub:
     def _recompute_state(self, now: datetime, refresh: bool = True) -> None:
         rep = self.data.d.get("representativeness") or {}
         representative = rep.get("representative", True)
+        rep_reason = rep.get("reason")
         ever_passed = any(
             item.get("passed") and item.get("algorithm") == L.ALGORITHM_VERSION
             for item in self.data.d["gate_history"]
         )
-        state, reason = L.derive_state(self.data.d["gate"], self.data.apply_switch, representative, ever_passed)
+        state, reason = L.derive_state(self.data.d["gate"], self.data.apply_switch, representative, ever_passed,
+                                       rep_reason if isinstance(rep_reason, str) else None)
         if self.config_problem:
             state, reason = L.STATE_PAUSED, f"configuration: {self.config_problem}"
         current = self.data.d["state"]
@@ -1669,15 +1703,7 @@ class LearningHub:
             await self._step(report, "production", self._async_update_production(now))
             await self._step(report, "model_from_station", self._async_update_model(now))
             report["days_decided"] = self._decide_days(now)
-            rep = await self.hass.async_add_executor_job(
-                L.representativeness, self.data.view(), self.groups, now, self.latitude, self.longitude
-            )
-            rep["evaluated"] = now.isoformat()
-            previous = self.data.d.get("representativeness") or {}
-            if previous.get("representative", True) and not rep["representative"]:
-                self.data.event(now, "station_unrepresentative",
-                                f"correlation {rep['r']} below {L.REPRESENTATIVE_MIN_R}: learning paused")
-            self.data.d["representativeness"] = rep
+            await self._async_representativeness(now)
             if not self.data.frozen:
                 await self._step(report, "stage2", self._async_stage2(now))
             else:
